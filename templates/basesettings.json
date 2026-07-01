@@ -1,0 +1,9 @@
+{
+    "editor.formatOnSave": true,
+    "editor.wordWrap": "on",
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit",
+        "source.unusedImports": "explicit"
+    },
+    "files.trimTrailingWhitespace": true
+}

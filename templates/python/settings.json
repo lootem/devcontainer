@@ -1,0 +1,15 @@
+{
+    // py
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+    },
+    // "python.analysis.extraPaths": ["${workspaceFolder}/src/backend"],
+    // "python.poetryPath": "${containerEnv:POETRY_VENV_PATH}",
+    // "python-envs.pythonProjects": [
+    //     {
+    //         "path": "src/backend",
+    //         "envManager": "ms-python.python:poetry",
+    //         "packageManager": "ms-python.python:poetry"
+    //     }
+    // ],
+}

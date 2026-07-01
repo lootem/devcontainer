@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+#
+# install.sh — scaffold a new project with lootem's devcontainer + editor config.
+#
+# Designed to be run as a one-liner:
+#   curl -fsSL https://raw.githubusercontent.com/lootem/devcontainer/main/install.sh | bash -s -- --language python,go
+#
+# It clones github.com/lootem/devcontainer, takes .devcontainer/ as a baseline,
+# and extends it with the files under templates/<language>/ for each language
+# you select. Prompts (language, overwrite, dependency install) read from
+# /dev/tty so they work even when the script is piped into bash.
+
+set -euo pipefail
+
+# --- Defaults -----------------------------------------------------------------
+REPO="lootem/devcontainer"
+REF="main"
+TARGET="."
+FORCE=false
+WANT_SKILLS=false
+LANGS=()
+
+# Language token → Dockerfile ARG name.
+lang_arg() {
+  case "$1" in
+    python) echo "PYTHON" ;;
+    go)     echo "GOLANG" ;;
+    js)     echo "NODEJS" ;;
+    *)      return 1 ;;
+  esac
+}
+VALID_LANGS="python go js"
+
+# --- TTY-aware helpers ----------------------------------------------------------
+HAVE_TTY=false
+# Must actually be openable: existence/readable tests pass even when there is
+# no controlling terminal (e.g. CI), where opening /dev/tty then fails.
+if { exec 3</dev/tty; } 2>/dev/null; then
+  HAVE_TTY=true
+  exec 3<&-
+fi
+
+die()  { echo "Error: $*" >&2; exit 1; }
+info() { echo "[install] $*"; }
+
+ask() { # ask "prompt" -> prints the answer (empty if no tty)
+  local ans=""
+  if [ "$HAVE_TTY" = true ]; then
+    read -r -p "$1" ans < /dev/tty || true
+  fi
+  printf '%s' "$ans"
+}
+
+# --- Argument parsing -----------------------------------------------------------
+add_langs() { # split a comma-separated list into LANGS
+  local IFS=','
+  for l in $1; do
+    [ -n "$l" ] && LANGS+=("$l")
+  done
+}
+
+usage() {
+  cat <<EOF
+Usage: install.sh [options]
+
+  -l, --language <list>  Comma-separated or repeated languages ($VALID_LANGS)
+      --skills           Copy skills/ into .claude/skills/ (default: off)
+  -t, --target <dir>     Target directory (default: current directory)
+  -f, --force            Overwrite existing files without prompting
+      --repo <owner/rep> Source repo (default: $REPO)
+      --ref <ref>        Branch/tag/commit to clone (default: $REF)
+  -h, --help             Show this help
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -l|--language) add_langs "$2"; shift 2 ;;
+    --language=*)  add_langs "${1#*=}"; shift ;;
+    --skills)      WANT_SKILLS=true; shift ;;
+    -t|--target)   TARGET="$2"; shift 2 ;;
+    --target=*)    TARGET="${1#*=}"; shift ;;
+    -f|--force)    FORCE=true; shift ;;
+    --repo)        REPO="$2"; shift 2 ;;
+    --repo=*)      REPO="${1#*=}"; shift ;;
+    --ref)         REF="$2"; shift 2 ;;
+    --ref=*)       REF="${1#*=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    *)             die "Unknown argument: $1 (see --help)" ;;
+  esac
+done
+
+# --- Interactive fill-ins (need a tty) ------------------------------------------
+if [ ${#LANGS[@]} -eq 0 ]; then
+  if [ "$HAVE_TTY" = true ]; then
+    info "Available languages: $VALID_LANGS"
+    add_langs "$(ask 'Languages (comma-separated, blank for none): ')"
+  else
+    die "No --language given and no tty for a prompt. Pass --language."
+  fi
+fi
+
+# Validate & de-duplicate language tokens.
+SEEN=" "
+CLEAN_LANGS=()
+for l in "${LANGS[@]}"; do
+  lang_arg "$l" >/dev/null 2>&1 || die "Unknown language '$l'. Valid: $VALID_LANGS"
+  case "$SEEN" in *" $l "*) continue ;; esac
+  SEEN="$SEEN$l "
+  CLEAN_LANGS+=("$l")
+done
+LANGS=("${CLEAN_LANGS[@]:-}")
+# Drop the empty placeholder that :-"" may leave when no langs selected.
+[ "${LANGS[0]:-}" = "" ] && LANGS=()
+
+if [ "$WANT_SKILLS" = false ] && [ "$HAVE_TTY" = true ]; then
+  case "$(ask 'Install Claude skills into .claude/skills/? [y/N] ')" in
+    y|Y|yes) WANT_SKILLS=true ;;
+  esac
+fi
+
+# --- Dependency checks ----------------------------------------------------------
+ensure_cmd() { # ensure_cmd <command> [package]
+  local cmd="$1" pkg="${2:-$1}"
+  command -v "$cmd" >/dev/null 2>&1 && return 0
+
+  echo "Missing required tool: $cmd" >&2
+  local do_install=false
+  if [ "$HAVE_TTY" = true ]; then
+    case "$(ask "Install '$pkg' now? [y/N] ")" in y|Y|yes) do_install=true ;; esac
+  fi
+  [ "$do_install" = true ] || die "Cannot continue without '$cmd'. Install it and re-run."
+
+  local sudo=""
+  [ "$(id -u)" -ne 0 ] && sudo="sudo"
+  if   command -v apt-get >/dev/null 2>&1; then $sudo apt-get update && $sudo apt-get install -y "$pkg"
+  elif command -v dnf     >/dev/null 2>&1; then $sudo dnf install -y "$pkg"
+  elif command -v pacman  >/dev/null 2>&1; then $sudo pacman -Sy --noconfirm "$pkg"
+  elif command -v brew    >/dev/null 2>&1; then brew install "$pkg"
+  else die "No supported package manager (apt/dnf/pacman/brew). Install '$cmd' manually."
+  fi
+  command -v "$cmd" >/dev/null 2>&1 || die "Installation of '$cmd' did not succeed."
+}
+
+ensure_cmd git
+ensure_cmd jq
+
+# --- Clone source repo ----------------------------------------------------------
+SRC="$(mktemp -d)"
+cleanup() { rm -rf "$SRC"; }
+trap cleanup EXIT
+
+info "Cloning $REPO@$REF ..."
+git clone --depth 1 --branch "$REF" "https://github.com/$REPO" "$SRC" >/dev/null 2>&1 \
+  || die "Failed to clone https://github.com/$REPO@$REF"
+
+TPL="$SRC/templates"
+DEVC="$SRC/.devcontainer"
+[ -d "$TPL" ]  || die "Source has no templates/ directory."
+[ -d "$DEVC" ] || die "Source has no .devcontainer/ directory."
+
+mkdir -p "$TARGET"
+
+# --- Overwrite-aware writers ----------------------------------------------------
+may_write() { # may_write <dest>  -> 0 if we should write, 1 to skip
+  local dest="$1"
+  [ -e "$dest" ] || return 0
+  [ "$FORCE" = true ] && return 0
+  if [ "$HAVE_TTY" = true ]; then
+    case "$(ask "Overwrite $dest? [y/N] ")" in
+      y|Y|yes) return 0 ;;
+      *) info "Skipped $dest"; return 1 ;;
+    esac
+  fi
+  info "Skipped existing $dest (no tty, no --force)"
+  return 1
+}
+
+write_from_stdin() { # write_from_stdin <dest>
+  local dest="$1"
+  if may_write "$dest"; then
+    mkdir -p "$(dirname "$dest")"
+    cat > "$dest"
+    info "Wrote $dest"
+  else
+    cat >/dev/null
+  fi
+}
+
+copy_verbatim() { # copy_verbatim <src> <dest>
+  local src="$1" dest="$2"
+  if may_write "$dest"; then
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    info "Wrote $dest"
+  fi
+}
+
+# --- JSONC → JSON (strip // comments and trailing commas), portably -------------
+strip_jsonc() { # strip_jsonc <file>  -> strict JSON on stdout
+  # 1. Drop // comments (leave :// inside URLs alone).
+  # 2. Drop trailing commas that precede a closing } or ] on a later line.
+  sed -E 's#([^:])//.*#\1#; s#^[[:space:]]*//.*##' "$1" | awk '
+    { n++; a[n]=$0 }
+    END {
+      for (i=1;i<=n;i++) {
+        line=a[i]; j=i+1
+        while (j<=n && a[j] ~ /^[[:space:]]*$/) j++
+        if (j<=n && a[j] ~ /^[[:space:]]*[]}]/) sub(/,[[:space:]]*$/,"",line)
+        print line
+      }
+    }'
+}
+
+# ═══ Assembly ═══════════════════════════════════════════════════════════════════
+
+# --- .devcontainer/ verbatim files -----------------------------------------------
+copy_verbatim "$DEVC/docker-compose.yml" "$TARGET/.devcontainer/docker-compose.yml"
+[ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"
+
+# --- .devcontainer/Dockerfile with language ARGs flipped to true -----------------
+DOCKERFILE_TMP="$SRC/Dockerfile.built"
+cp "$DEVC/Dockerfile" "$DOCKERFILE_TMP"
+for l in "${LANGS[@]}"; do
+  arg="$(lang_arg "$l")"
+  sed "s#^ARG ${arg}=false#ARG ${arg}=true#" "$DOCKERFILE_TMP" > "$DOCKERFILE_TMP.new"
+  mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
+done
+copy_verbatim "$DOCKERFILE_TMP" "$TARGET/.devcontainer/Dockerfile"
+
+# --- .devcontainer/devcontainer.json with extensions merged + deduped ------------
+EXT_FILES=("$DEVC/devcontainer.json")
+for l in "${LANGS[@]}"; do
+  [ -f "$TPL/$l/extensions.json" ] && EXT_FILES+=("$TPL/$l/extensions.json")
+done
+jq -s '
+  .[0] as $dc
+  | (($dc.customizations.vscode.extensions // []) + ((.[1:] | add) // [])) | unique as $exts
+  | $dc | .customizations.vscode.extensions = $exts
+' "${EXT_FILES[@]}" | write_from_stdin "$TARGET/.devcontainer/devcontainer.json"
+
+# --- .vscode/settings.json = base settings + each language's settings ------------
+SETTINGS_STRIPPED=("$SRC/base.settings.json")
+strip_jsonc "$TPL/basesettings.json" > "$SRC/base.settings.json"
+for l in "${LANGS[@]}"; do
+  if [ -f "$TPL/$l/settings.json" ]; then
+    strip_jsonc "$TPL/$l/settings.json" > "$SRC/$l.settings.json"
+    SETTINGS_STRIPPED+=("$SRC/$l.settings.json")
+  fi
+done
+jq -s 'reduce .[] as $o ({}; . * $o)' "${SETTINGS_STRIPPED[@]}" \
+  | write_from_stdin "$TARGET/.vscode/settings.json"
+
+# --- .gitignore = basegitignore + each language's <lang>gitignore ----------------
+{
+  cat "$TPL/basegitignore"
+  for l in "${LANGS[@]}"; do
+    for gi in "$TPL/$l"/*gitignore; do
+      [ -f "$gi" ] || continue
+      printf '\n# --- %s ---\n' "$l"
+      cat "$gi"
+    done
+  done
+} | write_from_stdin "$TARGET/.gitignore"
+
+# --- Per-language extra files (verbatim) -----------------------------------------
+for l in "${LANGS[@]}"; do
+  case "$l" in
+    python)
+      [ -f "$TPL/python/launch.json" ] && copy_verbatim "$TPL/python/launch.json" "$TARGET/.vscode/launch.json"
+      ;;
+    js)
+      [ -f "$TPL/js/pnpm-workspace.yaml" ] && copy_verbatim "$TPL/js/pnpm-workspace.yaml" "$TARGET/pnpm-workspace.yaml"
+      ;;
+  esac
+done
+
+# --- Root helper files (always) --------------------------------------------------
+if [ -f "$SRC/claude.sh" ]; then
+  copy_verbatim "$SRC/claude.sh" "$TARGET/claude.sh"
+  [ -f "$TARGET/claude.sh" ] && chmod +x "$TARGET/claude.sh"
+fi
+[ -f "$SRC/.env.example" ] && copy_verbatim "$SRC/.env.example" "$TARGET/.env.example"
+
+# --- Skills (optional; left untracked via .claude/ gitignore) --------------------
+if [ "$WANT_SKILLS" = true ]; then
+  if [ -d "$SRC/skills" ]; then
+    if may_write "$TARGET/.claude/skills"; then
+      mkdir -p "$TARGET/.claude/skills"
+      cp -R "$SRC/skills/." "$TARGET/.claude/skills/"
+      info "Wrote $TARGET/.claude/skills/"
+    fi
+  else
+    info "No skills/ directory in source; skipping."
+  fi
+fi
+
+# --- Summary --------------------------------------------------------------------
+echo
+info "Done. Target: $TARGET"
+if [ ${#LANGS[@]} -gt 0 ]; then
+  info "Languages enabled: ${LANGS[*]}"
+else
+  info "Languages enabled: (none — base devcontainer only)"
+fi
+[ "$WANT_SKILLS" = true ] && info "Skills installed to .claude/skills/ (untracked)"
