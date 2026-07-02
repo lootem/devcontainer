@@ -7,7 +7,7 @@ set -euo pipefail
 
 # ─── Default CLI params (edit freely) ────────────────────────────────────────
 CLAUDE_PARAMS=(
-  "--setting-sources" "local"
+  "--setting-sources" "project"
   "--effort" "medium"
   # "--model" "claude-sonnet-4-5"
 )
