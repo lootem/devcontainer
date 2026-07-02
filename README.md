@@ -64,3 +64,52 @@ Once it finishes, your folder has everything needed to open in
   (add `--skills` to include them).
 
 That's it - open the folder, let the container build, and start building.
+
+## Your Claude setup sticks around
+
+Rebuilding a container normally wipes everything that lived inside it - and
+that usually includes your AI assistant's memory, preferences, and sign-in. Here
+that isn't a problem.
+
+Claude Code is pointed at a `.claude` folder that lives with your project rather
+than inside the throwaway container. Because it's scoped to the project and
+travels with your code, your settings, permissions, and history survive every
+rebuild - and each project keeps its own setup instead of leaking into the
+others. Rebuild as often as you like; Claude picks up right where you left off.
+
+## Bring your own Claude backend
+
+Not everyone runs Claude the same way, so the included `claude.sh` helper lets
+you choose how to connect and remembers the details in a local `.env` file
+(never committed). Just launch it with the backend you want:
+
+- **`./claude.sh api`** - the Anthropic API, using your API key.
+- **`./claude.sh bedrock`** - Amazon Bedrock, via a Bedrock API key, an SSO
+  profile, or standard AWS access keys, whichever you have.
+- **`./claude.sh foundry`** - Azure AI Foundry, via a Foundry API key or your
+  existing `az login` session.
+
+Run it with no argument to start Claude with the defaults and no backend
+override. Copy `.env.example` to `.env`, fill in the fields for your chosen
+backend, and you're set - switching providers is just a different word on the
+command line.
+
+## Built to reduce supply-chain risk
+
+A dev environment is only as trustworthy as the things it downloads while being
+built. This template is deliberately conservative about that.
+
+- **Everything is pinned.** The base image is locked to an exact digest, and
+  each tool - Go, Node, Poetry, the AWS/Azure CLIs, PowerShell, and more - is
+  installed at a specific, named version rather than "whatever's latest today."
+  That means your container builds the same way tomorrow as it does now, and an
+  upstream package being tampered with doesn't silently flow into your build.
+- **You only install what you asked for.** The container is assembled from
+  build arguments (one per language and tool), and everything defaults to *off*.
+  Choosing `python` simply flips that one switch on. A smaller surface means
+  fewer moving parts to trust.
+- **Downloads are verified.** Where a tool publishes signatures (such as Claude
+  Code and the AWS CLI), the build checks them before trusting the download.
+
+When it's time to move a version forward, you do it on purpose: bump the pinned
+value, rebuild, and confirm - rather than being upgraded without noticing.
