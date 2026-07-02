@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/base:trixie@sha256:a30da48cdf5f9144ff7f2156622e701e752fc258d77ca7bb00120624f1a95938 AS devcontainer_base
 
 # -- Build arguments
-ARG CLAUDECODE=false
+ARG CLAUDECODE=true
 ARG GOLANG=false
 ARG PYTHON=false
 ARG NODEJS=false
