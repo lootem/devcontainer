@@ -30,7 +30,10 @@ out on demand. The result is:
 Go to the folder where you want your new project to live and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lootem/devcontainer/main/install.sh | bash -s -- --language python
+# Interactive mode
+curl -fsSL https://ltm.sh/dev | bash
+# Non-interactive (example)
+curl -fsSL https://ltm.sh/dev | bash -s -- --language python
 ```
 
 Swap `python` for `go` or `js`, or list several at once (`--language python,go`)
