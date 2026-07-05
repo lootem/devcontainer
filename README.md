@@ -34,6 +34,8 @@ Go to the folder where you want your new project to live and run:
 curl -fsSL https://ltm.sh/dev | bash
 # Non-interactive (example)
 curl -fsSL https://ltm.sh/dev | bash -s -- --language python
+# Update (overwrite) existing repo
+curl -fsSL https://ltm.sh/dev | bash -s -- -f
 ```
 
 Swap `python` for `go` or `js`, or list several at once (`--language python,go`)
