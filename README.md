@@ -19,8 +19,8 @@ out on demand. The result is:
 - **A ready-to-open dev container** - open the folder, let it build, and you're
   coding in a clean, reproducible environment instead of fighting local setup.
 - **Sensible defaults for your language** - the right editor extensions,
-  formatting rules, and ignore patterns are already in place for Python, Go, or
-  JavaScript/TypeScript.
+  formatting rules, and ignore patterns are already in place for Python, Go,
+  JavaScript/TypeScript, or .NET.
 - **AI tooling that just works** - Claude Code comes preconfigured, with an
   option to bring along a curated set of skills.
 - **Less time on setup** - spend your first hour building, not configuring.
@@ -48,7 +48,7 @@ same options.
 
 | Option | What it does |
 | --- | --- |
-| `-l`, `--language <list>` | Language(s) to set up: `python`, `go`, `js`. Combine with commas, or omit to be prompted. |
+| `-l`, `--language <list>` | Language(s) to set up: `python`, `go`, `js`, `dotnet`. Combine with commas, or omit to be prompted. |
 | `--skills` | Also bring along the curated Claude Code skills. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to the current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
@@ -66,7 +66,8 @@ Once it finishes, your folder has everything needed to open in
 - Editor settings and recommended extensions, already configured.
 - A starter `.gitignore` suited to your language.
 - Claude Code ready to run, and optionally a set of skills to go with it
-  (add `--skills` to include them).
+  (add `--skills` to include them). Rerunning with `--skills` only adds/updates
+  skills - it never removes ones the upstream template has since dropped.
 
 That's it - open the folder, let the container build, and start building.
 
