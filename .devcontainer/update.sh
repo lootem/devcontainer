@@ -88,6 +88,7 @@ arg_token() {
     DOTNET)     echo "dotnet" ;;
     AWSCLI)     echo "awscli" ;;
     AZCLI)      echo "azcli" ;;
+    GHCLI)      echo "gh" ;;
     POWERSHELL) echo "pwsh" ;;
     AZPWSH)     echo "azpwsh" ;;
     *)          return 1 ;;

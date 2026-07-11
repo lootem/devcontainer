@@ -42,12 +42,13 @@ tool_arg() {
   case "$1" in
     awscli) echo "AWSCLI" ;;
     azcli)  echo "AZCLI" ;;
+    gh)     echo "GHCLI" ;;
     pwsh)   echo "POWERSHELL" ;;
     azpwsh) echo "AZPWSH" ;;
     *)      return 1 ;;
   esac
 }
-VALID_TOOLS="awscli azcli pwsh azpwsh"
+VALID_TOOLS="awscli azcli gh pwsh azpwsh"
 
 # --- TTY-aware helpers ----------------------------------------------------------
 HAVE_TTY=false
