@@ -135,10 +135,8 @@ RUN if [ "$AZCLI" = "true" ]; then \
 # -- PowerShell
 ARG POWERSHELL=false
 ARG AZPWSH=false
-# Unlike GO_URL/NVM_URL, the version here appeared twice in one URL (once
-# with a "v" prefix in the path, once bare in the filename) — a single
-# extractVersion regex can only rewrite one occurrence, so this pin is
-# split into its own ARG and the URL is built from it below instead.
+# Bare ARG (URL built from it below) rather than a URL-embedded pin, since
+# the version appears twice in the PowerShell download URL.
 # renovate: datasource=github-releases depName=PowerShell/PowerShell
 ARG PWSH_VER=7.6.3
 # renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2

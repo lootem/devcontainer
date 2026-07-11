@@ -9,11 +9,10 @@ jobs:
   renovate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.0
 
-      # A fine-grained PAT, not the default GITHUB_TOKEN: PRs opened with
-      # GITHUB_TOKEN can't trigger other workflows, so the docker-build
-      # required check would never run and automerge would stall forever.
+      # PAT, not GITHUB_TOKEN: PRs from GITHUB_TOKEN don't trigger the build
+      # check, so automerge would never get a green status to merge on.
       - uses: renovatebot/github-action@v46.1.18
         with:
           configurationFile: .github/renovate-global.json5
