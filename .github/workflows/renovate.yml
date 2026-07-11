@@ -1,0 +1,20 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # A fine-grained PAT, not the default GITHUB_TOKEN: PRs opened with
+      # GITHUB_TOKEN can't trigger other workflows, so the docker-build
+      # required check would never run and automerge would stall forever.
+      - uses: renovatebot/github-action@v46.1.18
+        with:
+          configurationFile: .github/renovate-global.json5
+          token: ${{ secrets.RENOVATE_TOKEN }}

@@ -45,7 +45,10 @@ USER root
 
 # -- Go
 ARG GOLANG=true
+# renovate: datasource=golang-version depName=go
 ARG GO_URL=https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
+# renovate: datasource=go depName=golang.org/x/tools/gopls
+ARG GOPLS_VER=0.23.0
 
 RUN if [ "$GOLANG" = "true" ]; then \
     apt-get update && \
@@ -54,13 +57,14 @@ RUN if [ "$GOLANG" = "true" ]; then \
     fi
 USER vscode
 RUN if [ "$GOLANG" = "true" ]; then \
-    /usr/local/go/bin/go install golang.org/x/tools/gopls@v0.23.0; \
+    /usr/local/go/bin/go install golang.org/x/tools/gopls@v${GOPLS_VER}; \
     fi
 USER root
 # -- End Go
 
 # -- Python
 ARG PYTHON=false
+# renovate: datasource=pypi depName=poetry
 ARG POETRY_VER=2.4.1
 
 RUN if [ "$PYTHON" = "true" ]; then \
@@ -74,9 +78,13 @@ RUN if [ "$PYTHON" = "true" ]; then \
 
 # -- Node.js
 ARG NODEJS=false
+# renovate: datasource=github-releases depName=nvm-sh/nvm
 ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh
+# renovate: datasource=node-version depName=node
 ARG NODE_VER=24
+# renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
+# renovate: datasource=npm depName=pnpm
 ARG PNPM_VER=11.9.0
 
 USER vscode
@@ -93,6 +101,7 @@ USER root
 
 # -- .NET
 ARG DOTNET=false
+# renovate: datasource=dotnet-version depName=dotnet-sdk
 ARG DOTNET_VER=10.0
 
 RUN if [ "$DOTNET" = "true" ]; then \
@@ -106,6 +115,7 @@ RUN if [ "$DOTNET" = "true" ]; then \
 
 # -- AZCLI
 ARG AZCLI=false
+# renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
 ARG AZ_VER=2.87.0
 
 RUN if [ "$AZCLI" = "true" ]; then \
@@ -125,11 +135,17 @@ RUN if [ "$AZCLI" = "true" ]; then \
 # -- PowerShell
 ARG POWERSHELL=false
 ARG AZPWSH=false
-ARG PWSH_URL=https://github.com/PowerShell/PowerShell/releases/download/v7.6.3/powershell_7.6.3-1.deb_amd64.deb
+# Unlike GO_URL/NVM_URL, the version here appeared twice in one URL (once
+# with a "v" prefix in the path, once bare in the filename) — a single
+# extractVersion regex can only rewrite one occurrence, so this pin is
+# split into its own ARG and the URL is built from it below instead.
+# renovate: datasource=github-releases depName=PowerShell/PowerShell
+ARG PWSH_VER=7.6.3
+# renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2
 ARG AZPWSH_VER=15.1.0
 
 RUN if [ "$POWERSHELL" = "true" ] || [ "$AZPWSH" = "true" ]; then \
-    wget -q "${PWSH_URL}" -O /tmp/powershell.deb && \
+    wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VER}/powershell_${PWSH_VER}-1.deb_amd64.deb" -O /tmp/powershell.deb && \
     dpkg -i /tmp/powershell.deb; \
     apt-get install -f -y && \
     rm /tmp/powershell.deb; \
@@ -141,6 +157,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 
 # -- AWS CLI
 ARG AWSCLI=false
+# renovate: datasource=github-releases depName=aws/aws-cli
 ARG AWS_VER=2.35.14
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \

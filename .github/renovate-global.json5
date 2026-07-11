@@ -1,0 +1,8 @@
+{
+  // Self-hosted global config (repositories/platform/onboarding), separate
+  // from renovate.json5 (repo-level rules) at the repo root.
+  platform: 'github',
+  repositories: ['lootem/devcontainer'],
+  onboarding: false,
+  requireConfig: 'optional',
+}

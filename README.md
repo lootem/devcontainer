@@ -117,5 +117,32 @@ built. This template is deliberately conservative about that.
 - **Downloads are verified.** Where a tool publishes signatures (such as Claude
   Code and the AWS CLI), the build checks them before trusting the download.
 
-When it's time to move a version forward, you do it on purpose: bump the pinned
-value, rebuild, and confirm - rather than being upgraded without noticing.
+### Version bumps are automated, but gated
+
+Renovate opens PRs for the pinned versions in `.devcontainer/Dockerfile`
+(see `renovate.json5`), and a bespoke workflow does the same for the base
+image digest (`.github/workflows/base-image-digest.yml`), but neither one
+merges blindly:
+
+- **Never a major bump.** Only minor/patch updates (and the base image
+  digest) are ever proposed automatically.
+- **7-day supply-chain gate.** A release has to be at least a week old
+  before Renovate (or the base-image workflow) will even open a PR - long
+  enough for malware scanners to catch a compromised release before it
+  reaches this template.
+- **The container has to actually build first.** Every bump PR runs
+  `.github/workflows/build.yml`, which builds the Dockerfile with every
+  feature flag on, before it's allowed to merge.
+
+**One-time repo setup required** for this to work (not something this
+template can configure for you):
+
+1. Create a fine-grained GitHub PAT with contents/pull-requests write
+   access to this repo, and add it as the `RENOVATE_TOKEN` secret. It has
+   to be a real PAT, not the default `GITHUB_TOKEN` - PRs opened with
+   `GITHUB_TOKEN` can't trigger other workflows, so the `build` check above
+   would never run and nothing could ever auto-merge.
+2. In the repo's branch protection settings for `main`, add `build` (from
+   `build.yml`) as a required status check. This is what makes automerge
+   safe - without it, Renovate's `platformAutomerge` would merge PRs
+   whether or not the container actually builds.

@@ -1,0 +1,80 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+
+  // Supply-chain gate: never auto-bump a major version, and hold any
+  // minor/patch/digest release until it's had 7 days to be caught by
+  // malware scanners. internalChecksFilter=strict is the linchpin — it
+  // withholds branch/PR creation entirely (rather than opening it and
+  // relying on automerge timing) for any release whose age can't be
+  // confirmed, including releases from datasources with no timestamp.
+  internalChecksFilter: 'strict',
+  packageRules: [
+    {
+      matchUpdateTypes: ['major'],
+      enabled: false,
+    },
+    {
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      minimumReleaseAge: '7 days',
+    },
+  ],
+
+  // Auto-merge everything once the `docker build` required check is green
+  // and the 7-day gate above has passed. platformAutomerge defers to
+  // GitHub's native auto-merge, which respects branch protection required
+  // checks (see .github/workflows/build.yml).
+  automerge: true,
+  automergeType: 'pr',
+  platformAutomerge: true,
+
+  schedule: ['before 6am on monday'],
+
+  // Datasource timestamp verification (per the design doc's "verify before
+  // writing bespoke code" step): confirmed against the Renovate docs that
+  // every datasource used below has release-timestamp support, so none of
+  // them get silently withheld forever under internalChecksFilter=strict.
+  //   - github-releases (AWS CLI, Azure CLI, Bun, nvm, PowerShell):
+  //     releaseTimestamp from the release's published_at.
+  //   - nuget (Az PowerShell module via the PSGallery v2 feed): the
+  //     `Published` tag.
+  //   - go / golang-version (gopls, Go toolchain), node-version, npm,
+  //     pypi, dotnet-version: all have documented timestamp support too.
+  //   - docker (the base image digest) does NOT reliably support this —
+  //     that's why it's handled by the bespoke base-image-digest.yml
+  //     workflow instead of a Renovate rule.
+  customManagers: [
+    {
+      // Bare `ARG NAME=value` pins, discovered via an inline
+      // `# renovate: datasource=... depName=... [versioning=...] [extractVersion=...] [registryUrl=...]`
+      // comment on the line above. Covers gopls, Poetry, Node, Bun, pnpm,
+      // .NET SDK, Azure CLI, PowerShell, the Az PowerShell module, and the
+      // AWS CLI. The ARG name is enumerated explicitly (rather than `\w+`)
+      // so this doesn't also match GO_URL/NVM_URL below, which need their
+      // currentValue to be just the version substring inside a URL, not
+      // the whole ARG value.
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER)=(?<currentValue>\\S+)',
+      ],
+    },
+    {
+      // GO_URL embeds the Go toolchain version in a download URL rather
+      // than as a bare ARG value.
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>golang-version) depName=(?<depName>go)\\s+ARG GO_URL=https://go\\.dev/dl/go(?<currentValue>[0-9.]+)\\.linux-amd64\\.tar\\.gz',
+      ],
+    },
+    {
+      // NVM_URL embeds the nvm version in a download URL rather than as a
+      // bare ARG value.
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>nvm-sh/nvm)\\s+ARG NVM_URL=https://raw\\.githubusercontent\\.com/nvm-sh/nvm/(?<currentValue>v[0-9.]+)/install\\.sh',
+      ],
+    },
+  ],
+}

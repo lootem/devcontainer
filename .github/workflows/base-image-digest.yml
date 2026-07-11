@@ -1,0 +1,70 @@
+name: Base Image Digest Bump
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # trixie is a rolling tag with no releases/tags to hang a timestamp
+      # off of (Renovate's docker datasource only has release-timestamp
+      # support for Docker Hub, and even there digests inherit the tag's
+      # push time rather than their own). Resolve the digest + image
+      # created time ourselves and apply the same 7-day supply-chain gate
+      # used everywhere else.
+      - name: Resolve digest and age
+        id: resolve
+        run: |
+          set -euo pipefail
+          IMAGE="mcr.microsoft.com/devcontainers/base:trixie"
+          docker pull "$IMAGE" >/dev/null
+          NEW_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d@ -f2)
+          CREATED=$(docker inspect --format='{{.Created}}' "$IMAGE")
+          CREATED_EPOCH=$(date -d "$CREATED" +%s)
+          NOW_EPOCH=$(date +%s)
+          AGE_DAYS=$(( (NOW_EPOCH - CREATED_EPOCH) / 86400 ))
+          CURRENT_DIGEST=$(grep -oP '(?<=trixie@)sha256:[0-9a-f]+' .devcontainer/Dockerfile)
+
+          echo "digest=$NEW_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "age_days=$AGE_DAYS" >> "$GITHUB_OUTPUT"
+          echo "current_digest=$CURRENT_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Update Dockerfile
+        id: update
+        if: steps.resolve.outputs.digest != steps.resolve.outputs.current_digest && steps.resolve.outputs.age_days >= 7
+        run: |
+          set -euo pipefail
+          sed -i "s|trixie@${{ steps.resolve.outputs.current_digest }}|trixie@${{ steps.resolve.outputs.digest }}|" .devcontainer/Dockerfile
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # Uses the same fine-grained PAT as Renovate (not GITHUB_TOKEN), so
+      # the PR triggers the docker-build required check and can automerge.
+      - name: Open PR
+        if: steps.update.outputs.changed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+          commit-message: 'chore(deps): bump devcontainers/base:trixie digest'
+          title: 'chore(deps): bump devcontainers/base:trixie base image digest'
+          body: |
+            Bumps the `trixie` base image digest to the current tip.
+
+            Image age: ${{ steps.resolve.outputs.age_days }} days (meets the 7-day supply-chain gate).
+          branch: bump-base-image-digest
+          delete-branch: true
+
+      - name: Enable automerge
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        env:
+          GH_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-url }}"
