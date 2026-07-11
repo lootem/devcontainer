@@ -118,8 +118,8 @@ generated project files, prebuilt images are published to Docker Hub for each
 language plus one with everything enabled:
 
 ```bash
-docker pull lootem/devcontainer:python   # or go, js, dotnet
-docker pull lootem/devcontainer:all      # every language + cloud CLI
+docker pull lootemsec/devcontainer:python   # or go, js, dotnet
+docker pull lootemsec/devcontainer:all      # every language + cloud CLI
 ```
 
 These are rolling tags (`:python`, `:go`, `:js`, `:dotnet`, `:all`) rebuilt on
@@ -214,19 +214,20 @@ merges blindly:
 The recommended extensions in `templates/*/extensions.json` get the same
 gated-update treatment where it's available:
 
-- **Open-source extensions are pinned** to an exact version (`publisher.name@x.y.z`)
-  and tracked by Renovate through a custom [OpenVSX](https://open-vsx.org)
-  datasource, since Renovate has no built-in VS Code extension updater. They
-  go through the same major-bump-never, 7-day-gate, build-must-pass rules as
-  everything else.
-- **Microsoft/proprietary extensions are left unpinned** (e.g. the Remote
-  Development pack, `ms-azuretools.vscode-containers`, `ms-vscode.*`,
-  Pylance) - they aren't published to OpenVSX under an open license Renovate
-  can track, so they float at whatever version the Marketplace serves. Since
-  `extensions.autoUpdate` and `extensions.autoCheckUpdates` are both off in
-  the generated `devcontainer.json`, they won't silently update inside a
-  running container either - they're just not gated by this template's
-  update flow.
+- **Extensions available on [OpenVSX](https://open-vsx.org) are pinned** to an
+  exact version (`publisher.name@x.y.z`) and tracked by Renovate through a
+  custom OpenVSX datasource, since Renovate has no built-in VS Code extension
+  updater. This is decided by OpenVSX availability, not publisher — several
+  Microsoft-published extensions (`ms-python.python`, `ms-python.black-formatter`,
+  `ms-vscode.makefile-tools`) publish there and so are pinned. They go through
+  the same major-bump-never, 7-day-gate, build-must-pass rules as everything else.
+- **Extensions not on OpenVSX are left unpinned** (e.g. the Remote Development
+  pack, `ms-azuretools.vscode-containers`, `ms-dotnettools.vscode-dotnet-pack`,
+  Pylance) - Renovate has no datasource that can track them, so they float at
+  whatever version the Marketplace serves. Since `extensions.autoUpdate` and
+  `extensions.autoCheckUpdates` are both off in the generated
+  `devcontainer.json`, they won't silently update inside a running container
+  either - they're just not gated by this template's update flow.
 - If you generate a project without a fork of this template and its own
   Renovate config, pinned versions freeze at generation time; rerun
   `./install.sh -f` against a newer template ref to pick up updates.

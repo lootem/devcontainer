@@ -64,7 +64,10 @@
   customDatasources: {
     openvsx: {
       defaultRegistryUrlTemplate: 'https://open-vsx.org/api/{{packageName}}',
-      transformTemplates: ['{"releases": [{"version": version}]}'],
+      // releaseTimestamp is required: without it, minimumReleaseAge can't
+      // confirm the age and internalChecksFilter:'strict' withholds every
+      // extension update. OpenVSX returns the latest version's `timestamp`.
+      transformTemplates: ['{"releases": [{"version": version, "releaseTimestamp": timestamp}]}'],
     },
   },
 }

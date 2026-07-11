@@ -50,14 +50,17 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        if: needs.detect.outputs.dockerfile == 'true'
+        # Skip on push to main: a Dockerfile change there is validated by the
+        # publish job's all-features `all` image, so building all-on here too
+        # would be a redundant second build. PRs + manual dispatch still build.
+        if: needs.detect.outputs.dockerfile == 'true' && github.event_name != 'push'
 
       # Build with every feature ARG on so a bump to any feature layer
       # (azcli/pwsh/azpwsh/awscli included) actually compiles, not just the
       # default python/go/js/dotnet baseline. Never pushed - PRs never get
       # registry credentials.
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        if: needs.detect.outputs.dockerfile == 'true'
+        if: needs.detect.outputs.dockerfile == 'true' && github.event_name != 'push'
         with:
           context: .
           file: .devcontainer/Dockerfile
@@ -83,22 +86,21 @@ jobs:
     strategy:
       matrix:
         include:
+          # Every feature ARG defaults to false in the Dockerfile, so each
+          # per-language image only needs its own flag flipped on. (The `all`
+          # image below is the only one that pulls in the CLIs.)
           - tag: python
             build-args: |
               PYTHON=true
-              AWSCLI=false
           - tag: go
             build-args: |
               GOLANG=true
-              AWSCLI=false
           - tag: js
             build-args: |
               NODEJS=true
-              AWSCLI=false
           - tag: dotnet
             build-args: |
               DOTNET=true
-              AWSCLI=false
           - tag: all
             build-args: |
               GOLANG=true
@@ -125,7 +127,7 @@ jobs:
           file: .devcontainer/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: lootem/devcontainer:${{ matrix.tag }}
+          tags: lootemsec/devcontainer:${{ matrix.tag }}
           build-args: ${{ matrix.build-args }}
           cache-from: type=gha,scope=${{ matrix.tag }}
           cache-to: type=gha,mode=max,scope=${{ matrix.tag }}

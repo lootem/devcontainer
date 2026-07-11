@@ -56,6 +56,11 @@ against them to pull in upstream changes.
 
 Anything after a lone "--" is forwarded verbatim to the fetched install.sh
 (e.g. "-- --force" to overwrite files without prompting).
+
+Run this from an interactive terminal: install.sh prompts before overwriting
+files, and with no TTY those prompts default to "no" — so a non-interactive
+run would skip the Dockerfile update entirely. Use "-- --force" if you must
+run it unattended.
 EOF
 }
 
