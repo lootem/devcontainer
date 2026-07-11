@@ -27,7 +27,7 @@
       customType: 'regex',
       managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
       matchStrings: [
-        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER)=(?<currentValue>\\S+)',
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|CLAUDE_VER)=(?<currentValue>\\S+)',
       ],
     },
     {

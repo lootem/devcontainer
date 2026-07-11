@@ -7,7 +7,8 @@ FROM mcr.microsoft.com/devcontainers/base:trixie@sha256:1a00517e89d3075f8c9dc8d9
 # Set unconditionally — a missing directory on PATH is harmless.
 ENV PATH="/usr/local/go/bin:${PATH}" \
     GOROOT="/usr/local/go" \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    DISABLE_AUTOUPDATER=1
 
 # -- Base dependencies
 RUN apt-get update && apt-get upgrade -y && \
@@ -22,6 +23,8 @@ RUN ln -sf /bin/bash /bin/sh
 
 # -- Claude Code
 ARG CLAUDECODE=true
+# renovate: datasource=npm depName=@anthropic-ai/claude-code
+ARG CLAUDE_VER=2.1.207
 RUN if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
     curl -fsSL https://downloads.claude.ai/keys/claude-code.asc \
@@ -34,11 +37,11 @@ RUN if [ "$CLAUDECODE" = "true" ]; then \
     https://downloads.claude.ai/claude-code/apt/stable stable main" \
     | tee /etc/apt/sources.list.d/claude-code.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends claude-code;\
+    apt-get install -y --no-install-recommends claude-code=$CLAUDE_VER;\
     fi
 USER vscode
 RUN if [ "$CLAUDECODE" = "true" ]; then \
-    /usr/bin/claude install; \
+    /usr/bin/claude install $CLAUDE_VER; \
     fi
 USER root
 # -- End Claude Code
@@ -153,7 +156,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 
 # -- AWS CLI
 ARG AWSCLI=false
-# renovate: datasource=github-releases depName=aws/aws-cli
+# renovate: datasource=github-tags depName=aws/aws-cli
 ARG AWS_VER=2.35.14
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \

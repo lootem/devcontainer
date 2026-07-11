@@ -300,6 +300,34 @@ EOF
   assert_contains /tmp/test.sh.api_mode.log "ANTHROPIC_API_KEY=sk-test-xyz"
 }
 
+test_renovate_regex_covers_pins() {
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  local renovate="$REPO_ROOT/renovate.json5"
+
+  # ARGs covered by the primary bare-ARG customManager's name alternation.
+  local alternation
+  alternation="$(grep -oP '(?<=\(\?:)[A-Z_|]+(?=\)=)' "$renovate")"
+
+  # ARGs handled by their own dedicated customManagers (version embedded in a URL).
+  local dedicated=" GO_URL NVM_URL "
+
+  local missing=0
+  while IFS= read -r arg_name; do
+    [ -z "$arg_name" ] && continue
+    case "$dedicated" in
+      *" $arg_name "*) continue ;;
+    esac
+    if echo "$alternation" | tr '|' '\n' | grep -qxF "$arg_name"; then
+      ok "renovate.json5 alternation covers ARG $arg_name"
+    else
+      fail "renovate.json5 alternation missing ARG $arg_name (has a # renovate: comment in Dockerfile but isn't matched)"
+      missing=$((missing+1))
+    fi
+  done < <(grep -A1 '# renovate:' "$dockerfile" | grep -oP '(?<=^ARG )[A-Z_]+(?==)')
+
+  [ "$missing" -eq 0 ] && ok "no renovate-commented ARGs are unmatched"
+}
+
 test_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
     echo "  skip - shellcheck not installed"
@@ -358,6 +386,7 @@ TESTS=(
   test_keys_edit_no_plaintext_on_gpg_failure
   test_api_mode_decrypts_keys
   test_shellcheck
+  test_renovate_regex_covers_pins
 )
 
 SUITE_FAILS=0
