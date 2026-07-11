@@ -406,11 +406,12 @@ test_renovate_regex_covers_extension_pins() {
   regex="${regex//\\\\/\\}"
 
   local missing=0
-  for f in "$REPO_ROOT"/templates/*/extensions.json; do
+  for f in "$REPO_ROOT"/templates/*/extensions.json "$REPO_ROOT"/.devcontainer/devcontainer.json; do
+    [ -f "$f" ] || continue
     while IFS= read -r pin; do
       [ -z "$pin" ] && continue
       if echo "$pin" | grep -qP "$regex"; then
-        ok "renovate.json5 extension regex matches '$pin' in $(basename "$(dirname "$f")")"
+        ok "renovate.json5 extension regex matches '$pin' in $(basename "$f")"
       else
         fail "renovate.json5 extension regex misses '$pin' in $f"
         missing=$((missing+1))
@@ -472,6 +473,40 @@ test_token_set_matches_dockerfile_args() {
   done <<< "$mapped_args"
 
   [ "$missing" -eq 0 ] && ok "--language/--tool token set exactly matches flippable Dockerfile ARGs"
+}
+
+test_ask_yn_all_sticks_across_subshell() {
+  # Regression: the yes-to-all / no-to-all choice used to be stored in a shell
+  # variable assigned inside "$(ask_yn ...)" — a command-substitution subshell —
+  # so it evaporated on subshell exit and every overwrite still prompted. It's
+  # now file-backed; verify a choice made in one "$(ask_yn ...)" call is honored
+  # by later calls. Runs the REAL ask_yn extracted from install.sh so the test
+  # tracks the shipped code, with a stub tty reader in place of the prompt.
+  local harness
+  harness="$(awk '/^ask_yn\(\) \{/,/^\}/' "$REPO_ROOT/install.sh")"
+
+  drive() { # drive <first-answer>  -> echoes three consecutive ask_yn results
+    local first="$1"
+    (
+      eval "$harness"
+      FORCE=false
+      HAVE_TTY=true
+      ANSWER_ALL_FILE="$(mktemp)"
+      local calls; calls="$(mktemp)"; echo 0 > "$calls"
+      # First prompt returns $first (a=yes-to-all / o=no-to-all); if stickiness
+      # is broken, ask_yn calls this again and gets a plain "n"/"y" that differs.
+      ask() {
+        local n; n="$(cat "$calls")"; echo $((n+1)) > "$calls"
+        [ "$n" -eq 0 ] && printf '%s' "$first" || printf 'n'
+      }
+      printf '%s %s %s' "$(ask_yn q1)" "$(ask_yn q2)" "$(ask_yn q3)"
+      rm -f "$ANSWER_ALL_FILE" "$calls"
+    )
+  }
+
+  assert_eq "$(drive a)" "yes yes yes" "yes-to-all sticks across ask_yn subshells"
+  assert_eq "$(drive o)" "no no no"    "no-to-all sticks across ask_yn subshells"
+  unset -f drive
 }
 
 test_empty_array_iteration_guarded() {
@@ -549,6 +584,7 @@ TESTS=(
   test_extensions_opt_in
   test_extensions_no_duplicate_canonical
   test_idempotent_skip
+  test_ask_yn_all_sticks_across_subshell
   test_empty_array_iteration_guarded
   test_gitignore_merge
   test_gitignore_secrets
