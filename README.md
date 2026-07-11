@@ -79,7 +79,7 @@ won't line up.
 | Option | What it does |
 | --- | --- |
 | `-l`, `--language <list>` | Language(s) to set up: `python`, `go`, `js`, `dotnet`. Combine with commas, or omit to be prompted. |
-| `-T`, `--tool <list>` | Cloud/shell tool(s) to set up: `awscli`, `azcli`, `pwsh`, `azpwsh`. Combine with commas. |
+| `-T`, `--tool <list>` | Cloud/shell tool(s) to set up: `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`. Combine with commas. |
 | `--skills` | Also bring along the curated Claude Code skills. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to the current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
