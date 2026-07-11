@@ -47,7 +47,7 @@ USER root
 # -- End Claude Code
 
 # -- Go
-ARG GOLANG=true
+ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
 ARG GO_URL=https://go.dev/dl/go1.26.4.linux-amd64.tar.gz
 # renovate: datasource=go depName=golang.org/x/tools/gopls
