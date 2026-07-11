@@ -49,12 +49,37 @@ same options.
 | Option | What it does |
 | --- | --- |
 | `-l`, `--language <list>` | Language(s) to set up: `python`, `go`, `js`, `dotnet`. Combine with commas, or omit to be prompted. |
+| `-T`, `--tool <list>` | Cloud/shell tool(s) to set up: `awscli`, `azcli`, `pwsh`, `azpwsh`. Combine with commas. |
 | `--skills` | Also bring along the curated Claude Code skills. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to the current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
 | `--repo <owner/repo>` | Pull the template from a different repo (defaults to `lootem/devcontainer`). |
 | `--ref <ref>` | Use a specific branch, tag, or commit of the template. |
 | `-h`, `--help` | Show all options. |
+
+Enabling a tool only flips its Dockerfile build arg — there are no editor
+settings or `.gitignore` entries tied to them, unlike languages. `azpwsh`
+implies `pwsh` (the Dockerfile installs PowerShell if either `POWERSHELL` or
+`AZPWSH` is true), so you don't need to pass both.
+
+### Keeping a generated repo up to date
+
+Every generated repo gets a `.devcontainer/update.sh`. It detects whichever
+languages, tools, `--skills`, and `--extensions` you currently have enabled
+and re-runs `install.sh` against them, so you don't have to remember your
+original flags to pick up upstream changes:
+
+```bash
+.devcontainer/update.sh                 # re-sync against lootem/devcontainer@main
+.devcontainer/update.sh --ref <sha>     # pin to a specific commit
+.devcontainer/update.sh -- --force      # forward extra flags (e.g. --force) to install.sh
+```
+
+It's manual only - there's no devcontainer lifecycle hook running `curl|bash`
+on your behalf. Note that re-syncing resets `.devcontainer/Dockerfile`'s
+pinned tool versions to whatever the target ref currently pins upstream;
+that's expected, since a generated repo has no Renovate config of its own to
+bump those pins independently.
 
 ### Prefer a prebuilt image?
 
