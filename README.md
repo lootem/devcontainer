@@ -133,16 +133,3 @@ merges blindly:
 - **The container has to actually build first.** Every bump PR runs
   `.github/workflows/build.yml`, which builds the Dockerfile with every
   feature flag on, before it's allowed to merge.
-
-**One-time repo setup required** for this to work (not something this
-template can configure for you):
-
-1. Create a fine-grained GitHub PAT with contents/pull-requests write
-   access to this repo, and add it as the `RENOVATE_TOKEN` secret. It has
-   to be a real PAT, not the default `GITHUB_TOKEN` - PRs opened with
-   `GITHUB_TOKEN` can't trigger other workflows, so the `build` check above
-   would never run and nothing could ever auto-merge.
-2. In the repo's branch protection settings for `main`, add `build` (from
-   `build.yml`) as a required status check. This is what makes automerge
-   safe - without it, Renovate's `platformAutomerge` would merge PRs
-   whether or not the container actually builds.

@@ -135,8 +135,6 @@ RUN if [ "$AZCLI" = "true" ]; then \
 # -- PowerShell
 ARG POWERSHELL=false
 ARG AZPWSH=false
-# Bare ARG (URL built from it below) rather than a URL-embedded pin, since
-# the version appears twice in the PowerShell download URL.
 # renovate: datasource=github-releases depName=PowerShell/PowerShell
 ARG PWSH_VER=7.6.3
 # renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2
