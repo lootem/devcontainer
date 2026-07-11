@@ -474,6 +474,29 @@ test_token_set_matches_dockerfile_args() {
   [ "$missing" -eq 0 ] && ok "--language/--tool token set exactly matches flippable Dockerfile ARGs"
 }
 
+test_empty_array_iteration_guarded() {
+  # macOS's default /bin/bash is 3.2, where `set -u` (which install.sh enables)
+  # turns expansion of an EMPTY array — "${arr[@]}" — into a fatal "unbound
+  # variable" error. Bash 4.4+ (what CI runs) silently tolerates it, so this
+  # regression can't be reproduced by running install.sh here — guard it
+  # statically instead. LANGS/TOOLS are routinely empty (blank language prompt,
+  # or no --tool), so every iteration over an empty-capable array must use the
+  # ${arr[@]+"${arr[@]}"} guard, which expands to nothing when the array is empty.
+  local install="$REPO_ROOT/install.sh"
+  local names bad=0
+  names="$(grep -oE '^[A-Za-z_]+=\(\)' "$install" | sed 's/=()//')"
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    local hits
+    hits="$(grep -nF "in \"\${$name[@]}\"" "$install" || true)"
+    if [ -n "$hits" ]; then
+      fail "bare \"\${$name[@]}\" iteration crashes on bash 3.2 — use \${$name[@]+\"\${$name[@]}\"}: $hits"
+      bad=$((bad+1))
+    fi
+  done <<< "$names"
+  [ "$bad" -eq 0 ] && ok "all empty-capable array iterations use the bash-3.2 nounset guard"
+}
+
 test_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
     echo "  skip - shellcheck not installed"
@@ -526,6 +549,7 @@ TESTS=(
   test_extensions_opt_in
   test_extensions_no_duplicate_canonical
   test_idempotent_skip
+  test_empty_array_iteration_guarded
   test_gitignore_merge
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing

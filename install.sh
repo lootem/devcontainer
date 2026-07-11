@@ -159,9 +159,13 @@ if [ ${#LANGS[@]} -eq 0 ]; then
 fi
 
 # Validate & de-duplicate language tokens.
+# NB: iterate with the ${arr[@]+"${arr[@]}"} guard, not a bare "${arr[@]}".
+# Under `set -u`, bash 3.2 (macOS's default /bin/bash) treats expanding an
+# EMPTY array as an unbound-variable error; the guard expands to nothing when
+# empty and to the quoted elements otherwise. Applies to every LANGS/TOOLS loop.
 SEEN=" "
 CLEAN_LANGS=()
-for l in "${LANGS[@]}"; do
+for l in ${LANGS[@]+"${LANGS[@]}"}; do
   lang_arg "$l" >/dev/null 2>&1 || die "Unknown language '$l'. Valid: $VALID_LANGS"
   case "$SEEN" in *" $l "*) continue ;; esac
   SEEN="$SEEN$l "
@@ -174,7 +178,7 @@ LANGS=("${CLEAN_LANGS[@]:-}")
 # Validate & de-duplicate tool tokens.
 SEEN=" "
 CLEAN_TOOLS=()
-for t in "${TOOLS[@]}"; do
+for t in ${TOOLS[@]+"${TOOLS[@]}"}; do
   tool_arg "$t" >/dev/null 2>&1 || die "Unknown tool '$t'. Valid: $VALID_TOOLS"
   case "$SEEN" in *" $t "*) continue ;; esac
   SEEN="$SEEN$t "
@@ -357,7 +361,7 @@ fi
 # --- .devcontainer/Dockerfile with language + tool ARGs flipped to true ---------
 DOCKERFILE_TMP="$SRC/Dockerfile.built"
 cp "$DEVC/Dockerfile" "$DOCKERFILE_TMP"
-for l in "${LANGS[@]}"; do
+for l in ${LANGS[@]+"${LANGS[@]}"}; do
   arg="$(lang_arg "$l")"
   sed "s#^ARG ${arg}=false#ARG ${arg}=true#" "$DOCKERFILE_TMP" > "$DOCKERFILE_TMP.new"
   mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
@@ -365,7 +369,7 @@ for l in "${LANGS[@]}"; do
     die "Could not enable '$l' — no 'ARG ${arg}=false' line in Dockerfile."
   fi
 done
-for t in "${TOOLS[@]}"; do
+for t in ${TOOLS[@]+"${TOOLS[@]}"}; do
   arg="$(tool_arg "$t")"
   sed "s#^ARG ${arg}=false#ARG ${arg}=true#" "$DOCKERFILE_TMP" > "$DOCKERFILE_TMP.new"
   mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
@@ -378,7 +382,7 @@ copy_verbatim "$DOCKERFILE_TMP" "$TARGET/.devcontainer/Dockerfile"
 # --- .devcontainer/devcontainer.json, extensions merged + deduped (opt-in) ------
 if [ "$WANT_EXTENSIONS" = true ]; then
   EXT_FILES=("$DEVC/devcontainer.json")
-  for l in "${LANGS[@]}"; do
+  for l in ${LANGS[@]+"${LANGS[@]}"}; do
     [ -f "$TPL/$l/extensions.json" ] && EXT_FILES+=("$TPL/$l/extensions.json")
   done
   jq -s '
@@ -395,7 +399,7 @@ fi
 # into any existing file (conflicting keys prompt; see merge_settings_json) ------
 SETTINGS_STRIPPED=("$SRC/base.settings.json")
 strip_jsonc "$TPL/basesettings.json" > "$SRC/base.settings.json"
-for l in "${LANGS[@]}"; do
+for l in ${LANGS[@]+"${LANGS[@]}"}; do
   if [ -f "$TPL/$l/settings.json" ]; then
     strip_jsonc "$TPL/$l/settings.json" > "$SRC/$l.settings.json"
     SETTINGS_STRIPPED+=("$SRC/$l.settings.json")
@@ -408,7 +412,7 @@ jq -s 'reduce .[] as $o ({}; . * $o)' "${SETTINGS_STRIPPED[@]}" \
 # any existing file by appending missing lines (see merge_gitignore) --------------
 {
   cat "$TPL/basegitignore"
-  for l in "${LANGS[@]}"; do
+  for l in ${LANGS[@]+"${LANGS[@]}"}; do
     for gi in "$TPL/$l"/*gitignore; do
       [ -f "$gi" ] || continue
       printf '\n# --- %s ---\n' "$l"
@@ -418,7 +422,7 @@ jq -s 'reduce .[] as $o ({}; . * $o)' "${SETTINGS_STRIPPED[@]}" \
 } | merge_gitignore "$TARGET/.gitignore"
 
 # --- Per-language extra files (verbatim) -----------------------------------------
-for l in "${LANGS[@]}"; do
+for l in ${LANGS[@]+"${LANGS[@]}"}; do
   case "$l" in
     python)
       [ -f "$TPL/python/launch.json" ] && copy_verbatim "$TPL/python/launch.json" "$TARGET/.vscode/launch.json"
