@@ -3,7 +3,7 @@
 # install.sh — scaffold a new project with lootem's devcontainer + editor config.
 #
 # Designed to be run as a one-liner:
-#   curl -fsSL https://raw.githubusercontent.com/lootem/devcontainer/main/install.sh | bash -s -- --language python,go
+#   curl -fsSL https://ltm.sh/dev | bash -s -- --language python,go
 #
 # It clones github.com/lootem/devcontainer, takes .devcontainer/ as a baseline,
 # and extends it with the files under templates/<language>/ for each language
@@ -18,6 +18,7 @@ REF="main"
 TARGET="."
 FORCE=false
 WANT_SKILLS=false
+WANT_EXTENSIONS=false
 LANGS=()
 
 # Language token → Dockerfile ARG name.
@@ -26,10 +27,11 @@ lang_arg() {
     python) echo "PYTHON" ;;
     go)     echo "GOLANG" ;;
     js)     echo "NODEJS" ;;
+    dotnet) echo "DOTNET" ;;
     *)      return 1 ;;
   esac
 }
-VALID_LANGS="python go js"
+VALID_LANGS="python go js dotnet"
 
 # --- TTY-aware helpers ----------------------------------------------------------
 HAVE_TTY=false
@@ -51,6 +53,34 @@ ask() { # ask "prompt" -> prints the answer (empty if no tty)
   printf '%s' "$ans"
 }
 
+# Sticky answer once the user picks "all"/"none" at any ask_yn prompt, so they
+# aren't asked the same yes/no question repeatedly (e.g. once per gitignore
+# or settings.json key conflict).
+ANSWER_ALL=""
+
+ask_yn() { # ask_yn "prompt text (no trailing ?)" -> echoes "yes" or "no"
+  if [ -n "$ANSWER_ALL" ]; then
+    printf '%s' "$ANSWER_ALL"
+    return
+  fi
+  if [ "$FORCE" = true ]; then
+    printf 'yes'
+    return
+  fi
+  if [ "$HAVE_TTY" != true ]; then
+    printf 'no'
+    return
+  fi
+  local ans
+  ans="$(ask "$1? [y/N/a=yes-to-all/o=no-to-all] ")"
+  case "$ans" in
+    y|Y|yes)  printf 'yes' ;;
+    a|A|all)  ANSWER_ALL=yes; printf 'yes' ;;
+    o|O|none) ANSWER_ALL=no;  printf 'no' ;;
+    *)        printf 'no' ;;
+  esac
+}
+
 # --- Argument parsing -----------------------------------------------------------
 add_langs() { # split a comma-separated list into LANGS
   local IFS=','
@@ -65,6 +95,7 @@ Usage: install.sh [options]
 
   -l, --language <list>  Comma-separated or repeated languages ($VALID_LANGS)
       --skills           Copy skills/ into .claude/skills/ (default: off)
+      --extensions       Add recommended VS Code extensions to devcontainer.json (default: off)
   -t, --target <dir>     Target directory (default: current directory)
   -f, --force            Overwrite existing files without prompting
       --repo <owner/rep> Source repo (default: $REPO)
@@ -78,6 +109,7 @@ while [ $# -gt 0 ]; do
     -l|--language) add_langs "$2"; shift 2 ;;
     --language=*)  add_langs "${1#*=}"; shift ;;
     --skills)      WANT_SKILLS=true; shift ;;
+    --extensions)  WANT_EXTENSIONS=true; shift ;;
     -t|--target)   TARGET="$2"; shift 2 ;;
     --target=*)    TARGET="${1#*=}"; shift ;;
     -f|--force)    FORCE=true; shift ;;
@@ -116,6 +148,12 @@ LANGS=("${CLEAN_LANGS[@]:-}")
 if [ "$WANT_SKILLS" = false ] && [ "$HAVE_TTY" = true ]; then
   case "$(ask 'Install Claude skills into .claude/skills/? [y/N] ')" in
     y|Y|yes) WANT_SKILLS=true ;;
+  esac
+fi
+
+if [ "$WANT_EXTENSIONS" = false ] && [ "$HAVE_TTY" = true ]; then
+  case "$(ask 'Add recommended VS Code extensions to devcontainer.json? [y/N] ')" in
+    y|Y|yes) WANT_EXTENSIONS=true ;;
   esac
 fi
 
@@ -165,14 +203,10 @@ mkdir -p "$TARGET"
 may_write() { # may_write <dest>  -> 0 if we should write, 1 to skip
   local dest="$1"
   [ -e "$dest" ] || return 0
-  [ "$FORCE" = true ] && return 0
-  if [ "$HAVE_TTY" = true ]; then
-    case "$(ask "Overwrite $dest? [y/N] ")" in
-      y|Y|yes) return 0 ;;
-      *) info "Skipped $dest"; return 1 ;;
-    esac
+  if [ "$(ask_yn "Overwrite $dest")" = "yes" ]; then
+    return 0
   fi
-  info "Skipped existing $dest (no tty, no --force)"
+  info "Skipped $dest"
   return 1
 }
 
@@ -212,6 +246,65 @@ strip_jsonc() { # strip_jsonc <file>  -> strict JSON on stdout
     }'
 }
 
+# --- Merge-on-conflict writers ---------------------------------------------------
+# Unlike may_write()/write_from_stdin() (whole-file overwrite-or-skip), these two
+# combine generated content with whatever's already at dest instead of clobbering it.
+
+merge_gitignore() { # merge_gitignore <dest>  (reads generated .gitignore on stdin)
+  local dest="$1" generated
+  generated="$(cat)"
+  if [ ! -e "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    printf '%s\n' "$generated" > "$dest"
+    info "Wrote $dest"
+    return
+  fi
+  local to_add="" line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    grep -qxF "$line" "$dest" && continue
+    to_add+="$line"$'\n'
+  done <<< "$generated"
+  if [ -n "$to_add" ]; then
+    if grep -qxF '# --- merged from generator ---' "$dest"; then
+      printf '%s' "$to_add" >> "$dest"
+    else
+      { printf '\n# --- merged from generator ---\n'; printf '%s' "$to_add"; } >> "$dest"
+    fi
+    info "Merged new entries into $dest"
+  else
+    info "$dest already up to date"
+  fi
+}
+
+merge_settings_json() { # merge_settings_json <dest>  (reads generated JSON on stdin)
+  local dest="$1" generated
+  generated="$(cat)"
+  if [ ! -e "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    printf '%s' "$generated" > "$dest"
+    info "Wrote $dest"
+    return
+  fi
+  local existing merged key gval eval_ decision
+  existing="$(strip_jsonc "$dest")"
+  merged="$existing"
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
+    gval="$(printf '%s' "$generated" | jq -c --arg k "$key" '.[$k]')"
+    if ! printf '%s' "$existing" | jq -e --arg k "$key" 'has($k)' >/dev/null; then
+      merged="$(printf '%s' "$merged" | jq --arg k "$key" --argjson v "$gval" '.[$k] = $v')"
+      continue
+    fi
+    eval_="$(printf '%s' "$existing" | jq -c --arg k "$key" '.[$k]')"
+    [ "$eval_" = "$gval" ] && continue
+    decision="$(ask_yn "$dest: key \"$key\" differs (existing: $eval_ / generated: $gval) — use generated value")"
+    [ "$decision" = "yes" ] && merged="$(printf '%s' "$merged" | jq --arg k "$key" --argjson v "$gval" '.[$k] = $v')"
+  done < <(printf '%s' "$generated" | jq -r 'keys[]')
+  printf '%s\n' "$merged" | jq '.' > "$dest"
+  info "Merged $dest"
+}
+
 # ═══ Assembly ═══════════════════════════════════════════════════════════════════
 
 # --- .devcontainer/ verbatim files -----------------------------------------------
@@ -225,21 +318,30 @@ for l in "${LANGS[@]}"; do
   arg="$(lang_arg "$l")"
   sed "s#^ARG ${arg}=false#ARG ${arg}=true#" "$DOCKERFILE_TMP" > "$DOCKERFILE_TMP.new"
   mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
+  if ! grep -q "^ARG ${arg}=true" "$DOCKERFILE_TMP"; then
+    die "Could not enable '$l' — no 'ARG ${arg}=false' line in Dockerfile."
+  fi
 done
 copy_verbatim "$DOCKERFILE_TMP" "$TARGET/.devcontainer/Dockerfile"
 
-# --- .devcontainer/devcontainer.json with extensions merged + deduped ------------
-EXT_FILES=("$DEVC/devcontainer.json")
-for l in "${LANGS[@]}"; do
-  [ -f "$TPL/$l/extensions.json" ] && EXT_FILES+=("$TPL/$l/extensions.json")
-done
-jq -s '
-  .[0] as $dc
-  | (($dc.customizations.vscode.extensions // []) + ((.[1:] | add) // [])) | unique as $exts
-  | $dc | .customizations.vscode.extensions = $exts
-' "${EXT_FILES[@]}" | write_from_stdin "$TARGET/.devcontainer/devcontainer.json"
+# --- .devcontainer/devcontainer.json, extensions merged + deduped (opt-in) ------
+if [ "$WANT_EXTENSIONS" = true ]; then
+  EXT_FILES=("$DEVC/devcontainer.json")
+  for l in "${LANGS[@]}"; do
+    [ -f "$TPL/$l/extensions.json" ] && EXT_FILES+=("$TPL/$l/extensions.json")
+  done
+  jq -s '
+    .[0] as $dc
+    | (($dc.customizations.vscode.extensions // []) + ((.[1:] | add) // [])) | unique as $exts
+    | $dc | .customizations.vscode.extensions = $exts
+  ' "${EXT_FILES[@]}" | write_from_stdin "$TARGET/.devcontainer/devcontainer.json"
+else
+  jq 'del(.customizations.vscode.extensions)' "$DEVC/devcontainer.json" \
+    | write_from_stdin "$TARGET/.devcontainer/devcontainer.json"
+fi
 
-# --- .vscode/settings.json = base settings + each language's settings ------------
+# --- .vscode/settings.json = base settings + each language's settings, merged
+# into any existing file (conflicting keys prompt; see merge_settings_json) ------
 SETTINGS_STRIPPED=("$SRC/base.settings.json")
 strip_jsonc "$TPL/basesettings.json" > "$SRC/base.settings.json"
 for l in "${LANGS[@]}"; do
@@ -249,9 +351,10 @@ for l in "${LANGS[@]}"; do
   fi
 done
 jq -s 'reduce .[] as $o ({}; . * $o)' "${SETTINGS_STRIPPED[@]}" \
-  | write_from_stdin "$TARGET/.vscode/settings.json"
+  | merge_settings_json "$TARGET/.vscode/settings.json"
 
-# --- .gitignore = basegitignore + each language's <lang>gitignore ----------------
+# --- .gitignore = basegitignore + each language's <lang>gitignore, merged into
+# any existing file by appending missing lines (see merge_gitignore) --------------
 {
   cat "$TPL/basegitignore"
   for l in "${LANGS[@]}"; do
@@ -261,7 +364,7 @@ jq -s 'reduce .[] as $o ({}; . * $o)' "${SETTINGS_STRIPPED[@]}" \
       cat "$gi"
     done
   done
-} | write_from_stdin "$TARGET/.gitignore"
+} | merge_gitignore "$TARGET/.gitignore"
 
 # --- Per-language extra files (verbatim) -----------------------------------------
 for l in "${LANGS[@]}"; do
@@ -304,3 +407,5 @@ else
   info "Languages enabled: (none — base devcontainer only)"
 fi
 [ "$WANT_SKILLS" = true ] && info "Skills installed to .claude/skills/ (untracked)"
+[ "$WANT_EXTENSIONS" = true ] && info "Recommended VS Code extensions added to devcontainer.json"
+exit 0
