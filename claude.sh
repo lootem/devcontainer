@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # claude.sh
 # Usage: ./claude.sh [bedrock|foundry|api]
+#        ./claude.sh keys init|edit
 #        No argument → runs with default CLI params only.
 
 set -euo pipefail
@@ -13,8 +14,13 @@ CLAUDE_PARAMS=(
   # "--model" "claude-sonnet-5"
 )
 
-# Path to your .env file (used only in api mode)
+# Path to your .env file (non-secret config only — see keys init/edit for secrets)
 ENV_FILE="${ENV_FILE:-.env}"
+
+# Durable secrets live gpg-encrypted at rest; decrypted to memory only, never to disk.
+# The keys file's content — not any hardcoded variable list — decides what's secret:
+# whatever KEY=VALUE lines you put in it are exported when a mode needs them.
+KEYS_GPG="${KEYS_GPG:-.env.keys.gpg}"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 die()          { echo "Error: $*" >&2; exit 1; }
@@ -30,6 +36,146 @@ load_env_file() {
   set +a
 }
 
+# ─── TTY-aware prompt ─────────────────────────────────────────────────────────
+# Prompts read from /dev/tty (like install.sh's ask()) so piping something into
+# claude.sh's own stdin can't be hijacked into answering a secret prompt; when
+# there's no controlling terminal (CI), fall back to plain stdin.
+HAVE_TTY=false
+if { exec 3</dev/tty; } 2>/dev/null; then
+  HAVE_TTY=true
+  exec 3<&-
+fi
+
+read_secret() { # read_secret <prompt> -> prints the entered value
+  local prompt="$1" val
+  if [[ "$HAVE_TTY" == true ]]; then
+    read -r -s -p "$prompt" val < /dev/tty
+    echo >&2
+  else
+    read -r val
+  fi
+  printf '%s' "$val"
+}
+
+# ─── Secrets: decrypt-to-memory only, never written to disk ─────────────────
+TMP_CLEANUP=()
+cleanup_tmp() {
+  local f
+  for f in "${TMP_CLEANUP[@]:-}"; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    if command -v shred >/dev/null 2>&1; then
+      shred -u "$f" 2>/dev/null || rm -f "$f"
+    else
+      : > "$f" 2>/dev/null || true
+      rm -f "$f"
+    fi
+  done
+}
+trap cleanup_tmp EXIT
+
+register_tmp() { TMP_CLEANUP+=("$1"); }
+
+gpg_encrypt() { # gpg_encrypt <plaintext-file> <passphrase>
+  printf '%s' "$2" | gpg --batch --yes --passphrase-fd 0 --symmetric --cipher-algo AES256 \
+    --output "$KEYS_GPG" "$1"
+}
+
+gpg_decrypt() { # gpg_decrypt <passphrase> -> prints decrypted content on stdout
+  printf '%s' "$1" | gpg --batch --yes --passphrase-fd 0 --decrypt "$KEYS_GPG" 2>/dev/null
+}
+
+new_passphrase() { # new_passphrase <verb> -> prints passphrase, dies on mismatch
+  local pass confirm
+  pass="$(read_secret "Passphrase to $1 ${KEYS_GPG}: ")"
+  confirm="$(read_secret "Confirm passphrase: ")"
+  [[ "$pass" == "$confirm" ]] || die "Passphrases did not match; aborting."
+  printf '%s' "$pass"
+}
+
+# Decrypt $KEYS_GPG and export every KEY=VALUE line into the current process env.
+load_keys_file() {
+  [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './claude.sh keys init' first."
+  local pass decrypted
+  pass="$(read_secret "Passphrase for ${KEYS_GPG}: ")"
+  decrypted="$(gpg_decrypt "$pass")" || die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"
+  unset pass
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    export "$line"
+  done <<< "$decrypted"
+  unset decrypted
+}
+
+keys_init() {
+  [[ -f "$KEYS_GPG" ]] && info "'${KEYS_GPG}' already exists; this will overwrite it."
+
+  local tmp
+  tmp="$(mktemp)"
+  register_tmp "$tmp"
+  chmod 600 "$tmp"
+
+  {
+    echo "# Secrets for claude.sh — one KEY=VALUE per line (e.g. ANTHROPIC_API_KEY=sk-...)."
+    echo "# Lines below were copied from ${ENV_FILE}; delete anything that should stay there."
+    echo "# Save and exit to encrypt whatever remains into ${KEYS_GPG}."
+    echo
+    [[ -f "$ENV_FILE" ]] && grep -E '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$ENV_FILE"
+  } > "$tmp" 2>/dev/null || true
+
+  "${EDITOR:-vi}" "$tmp"
+
+  grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$tmp" || die "No secret values provided; aborting keys init."
+
+  local pass
+  pass="$(new_passphrase "encrypt")"
+  gpg_encrypt "$tmp" "$pass"
+  unset pass
+
+  # Whatever keys ended up in the keys file no longer belong in $ENV_FILE too —
+  # the encrypted file is the only on-disk copy.
+  if [[ -f "$ENV_FILE" ]]; then
+    local names pattern envtmp
+    names="$(grep -Eo '^[A-Za-z_][A-Za-z0-9_]*=' "$tmp" | sed 's/=$//' | sort -u)"
+    if [[ -n "$names" ]]; then
+      pattern="$(printf '%s\n' "$names" | paste -sd'|' -)"
+      envtmp="$(mktemp)"
+      register_tmp "$envtmp"
+      grep -Ev "^(${pattern})=" "$ENV_FILE" > "$envtmp" || true
+      mv "$envtmp" "$ENV_FILE"
+    fi
+  fi
+
+  info "'${KEYS_GPG}' created. Secret values migrated out of '${ENV_FILE}'."
+}
+
+keys_edit() {
+  [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './claude.sh keys init' first."
+
+  local pass plain
+  pass="$(read_secret "Passphrase for ${KEYS_GPG}: ")"
+  plain="$(mktemp)"
+  register_tmp "$plain"
+  chmod 600 "$plain"
+  gpg_decrypt "$pass" > "$plain" || die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"
+
+  "${EDITOR:-vi}" "$plain"
+
+  gpg_encrypt "$plain" "$pass"
+  unset pass
+
+  info "'${KEYS_GPG}' updated."
+}
+
+# ─── keys subcommand ──────────────────────────────────────────────────────────
+if [[ "${1:-}" == "keys" ]]; then
+  case "${2:-}" in
+    init) keys_init; exit 0 ;;
+    edit) keys_edit; exit 0 ;;
+    *)    echo "Usage: $0 keys [init|edit]" >&2; exit 1 ;;
+  esac
+fi
+
 # ─── Auth mode ────────────────────────────────────────────────────────────────
 AUTH_MODE="${1:-}"
 
@@ -38,6 +184,7 @@ case "$AUTH_MODE" in
   bedrock)
     info "Mode: AWS Bedrock"
     load_env_file "$ENV_FILE"
+    [[ -f "$KEYS_GPG" ]] && load_keys_file
 
     # Always required
     export CLAUDE_CODE_USE_BEDROCK=1
@@ -60,7 +207,7 @@ case "$AUTH_MODE" in
       [[ -n "${AWS_SESSION_TOKEN:-}" ]] && export AWS_SESSION_TOKEN
 
     else
-      die "No Bedrock credentials found in '${ENV_FILE}'. Set AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE, or AWS_ACCESS_KEY_ID."
+      die "No Bedrock credentials found. Set AWS_BEARER_TOKEN_BEDROCK or AWS_ACCESS_KEY_ID via './claude.sh keys init', or AWS_PROFILE in '${ENV_FILE}'."
     fi
 
     CLAUDE_PARAMS+=("--bedrock")
@@ -69,6 +216,7 @@ case "$AUTH_MODE" in
   foundry)
     info "Mode: Azure AI Foundry"
     load_env_file "$ENV_FILE"
+    [[ -f "$KEYS_GPG" ]] && load_keys_file
 
     # Always required
     export CLAUDE_CODE_USE_FOUNDRY=1
@@ -85,10 +233,10 @@ case "$AUTH_MODE" in
     ;;
 
   api)
-    info "Mode: Anthropic API  (key from ${ENV_FILE})"
-    load_env_file "$ENV_FILE"
+    info "Mode: Anthropic API  (key from ${KEYS_GPG})"
+    load_keys_file
     [[ -n "${ANTHROPIC_API_KEY:-}" ]] \
-      || die "ANTHROPIC_API_KEY not found in '${ENV_FILE}'"
+      || die "ANTHROPIC_API_KEY not found in '${KEYS_GPG}'. Run './claude.sh keys init'."
     export ANTHROPIC_API_KEY
     ;;
 

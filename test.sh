@@ -83,6 +83,10 @@ assert_file_exists() { # assert_file_exists <path>
   [ -f "$1" ] && ok "$1 exists" || fail "$1 missing"
 }
 
+assert_file_not_exists() { # assert_file_not_exists <path>
+  [ -f "$1" ] && fail "$1 exists (should not)" || ok "$1 absent"
+}
+
 assert_json_valid() { # assert_json_valid <path>
   jq . "$1" >/dev/null 2>&1 && ok "$1 is valid JSON" || fail "$1 is not valid JSON"
 }
@@ -181,6 +185,129 @@ test_verbatim_extras() {
   assert_file_exists "$d/pnpm-workspace.yaml"
 }
 
+test_gitignore_secrets() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+  assert_contains "$d/.gitignore" ".env.keys"
+  assert_contains "$d/.gitignore" ".env.keys.gpg"
+}
+
+test_keys_init_migrates_and_encrypts() {
+  local d; d="$(new_dir)"
+  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
+  chmod +x "$d/claude.sh"
+  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
+
+  # keys init seeds the editor buffer from .env and opens $EDITOR on it; a
+  # no-op editor keeps the seeded content as-is (nothing to hand-edit here).
+  cat > "$d/noop_editor.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$d/noop_editor.sh"
+
+  # Answer prompts: passphrase, then confirm.
+  if ! ( cd "$d" && EDITOR="$d/noop_editor.sh" bash -c "printf 'testpass\ntestpass\n' | ./claude.sh keys init" ) \
+      >/tmp/test.sh.keys_init.log 2>&1; then
+    fail "claude.sh keys init failed (see /tmp/test.sh.keys_init.log)"
+    cat /tmp/test.sh.keys_init.log
+    return
+  fi
+
+  assert_file_exists "$d/.env.keys.gpg"
+  assert_file_not_exists "$d/.env.keys"
+  if grep -q '^ANTHROPIC_API_KEY=' "$d/.env" 2>/dev/null; then
+    fail "$d/.env still contains ANTHROPIC_API_KEY (secret not migrated out)"
+  else
+    ok "$d/.env no longer contains ANTHROPIC_API_KEY"
+  fi
+}
+
+test_keys_init_no_plaintext_on_editor_failure() {
+  local d; d="$(new_dir)"
+  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
+  chmod +x "$d/claude.sh"
+  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
+
+  cat > "$d/bad_editor.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$d/bad_editor.sh"
+
+  mkdir -p "$d/tmp"
+  if ( cd "$d" && TMPDIR="$d/tmp" EDITOR="$d/bad_editor.sh" \
+       bash -c "printf 'testpass\ntestpass\n' | ./claude.sh keys init" ) \
+      >/tmp/test.sh.keys_init_crash.log 2>&1; then
+    fail "claude.sh keys init should abort when \$EDITOR fails"
+  else
+    ok "claude.sh keys init aborts when \$EDITOR fails"
+  fi
+
+  assert_file_not_exists "$d/.env.keys.gpg"
+  if [ -z "$(ls -A "$d/tmp" 2>/dev/null)" ]; then
+    ok "no leftover plaintext temp files after \$EDITOR failure"
+  else
+    fail "leftover temp files after \$EDITOR failure: $(ls -A "$d/tmp")"
+  fi
+}
+
+test_keys_edit_no_plaintext_on_editor_failure() {
+  local d; d="$(new_dir)"
+  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
+  chmod +x "$d/claude.sh"
+  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
+  cat > "$d/noop_editor.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$d/noop_editor.sh"
+  ( cd "$d" && EDITOR="$d/noop_editor.sh" bash -c "printf 'testpass\ntestpass\n' | ./claude.sh keys init" ) >/dev/null 2>&1
+
+  cat > "$d/bad_editor.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$d/bad_editor.sh"
+
+  mkdir -p "$d/tmp"
+  if ( cd "$d" && TMPDIR="$d/tmp" EDITOR="$d/bad_editor.sh" \
+       bash -c "printf 'testpass\n' | ./claude.sh keys edit" ) >/tmp/test.sh.keys_edit.log 2>&1; then
+    fail "claude.sh keys edit should abort when \$EDITOR fails"
+  else
+    ok "claude.sh keys edit aborts when \$EDITOR fails"
+  fi
+
+  if [ -z "$(ls -A "$d/tmp" 2>/dev/null)" ]; then
+    ok "no leftover plaintext temp files after \$EDITOR failure"
+  else
+    fail "leftover temp files after \$EDITOR failure: $(ls -A "$d/tmp")"
+  fi
+}
+
+test_api_mode_decrypts_keys() {
+  local d; d="$(new_dir)"
+  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
+  chmod +x "$d/claude.sh"
+  mkdir -p "$d/bin"
+  cat > "$d/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
+EOF
+  chmod +x "$d/bin/claude"
+  cat > "$d/noop_editor.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$d/noop_editor.sh"
+  echo "ANTHROPIC_API_KEY=sk-test-xyz" > "$d/.env"
+  ( cd "$d" && EDITOR="$d/noop_editor.sh" bash -c "printf 'testpass\ntestpass\n' | ./claude.sh keys init" ) >/dev/null 2>&1
+
+  ( cd "$d" && printf 'testpass\n' | PATH="$d/bin:$PATH" ./claude.sh api ) \
+    >/tmp/test.sh.api_mode.log 2>&1
+  assert_contains /tmp/test.sh.api_mode.log "ANTHROPIC_API_KEY=sk-test-xyz"
+}
+
 test_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
     echo "  skip - shellcheck not installed"
@@ -231,8 +358,13 @@ TESTS=(
   test_extensions_opt_in
   test_idempotent_skip
   test_gitignore_merge
+  test_gitignore_secrets
   test_settings_merge_notty_keeps_existing
   test_settings_merge_force_takes_generated
+  test_keys_init_migrates_and_encrypts
+  test_keys_init_no_plaintext_on_editor_failure
+  test_keys_edit_no_plaintext_on_editor_failure
+  test_api_mode_decrypts_keys
   test_shellcheck
 )
 

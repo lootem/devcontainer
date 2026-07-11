@@ -1,2 +1,4 @@
 .env
+.env.keys
+.env.keys.gpg
 .claude/
