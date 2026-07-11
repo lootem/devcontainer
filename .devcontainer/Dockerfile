@@ -79,7 +79,7 @@ RUN if [ "$PYTHON" = "true" ]; then \
 # -- Node.js
 ARG NODEJS=false
 # renovate: datasource=github-releases depName=nvm-sh/nvm
-ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh
+ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh
 # renovate: datasource=node-version depName=node
 ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
