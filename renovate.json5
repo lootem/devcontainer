@@ -47,11 +47,17 @@
       ],
     },
     {
-      // VS Code extension pins in templates/*/extensions.json, "publisher.name@x.y.z".
-      // Only OSS extensions available on OpenVSX get pinned this way; Microsoft/
-      // proprietary ones are left as bare, unpinned strings (see README).
+      // VS Code extension pins ("publisher.name@x.y.z") in the template
+      // extensions.json files AND the base devcontainer.json. Only extensions
+      // available on OpenVSX get pinned this way; ones that aren't published
+      // there (e.g. the Remote pack) are left as bare, unpinned strings — the
+      // custom datasource has no way to track them (see README). The bare
+      // strings don't match the `@version` regex, so they're simply ignored.
       customType: 'regex',
-      managerFilePatterns: ['/^templates/[^/]+/extensions\\.json$/'],
+      managerFilePatterns: [
+        '/^templates/[^/]+/extensions\\.json$/',
+        '/^\\.devcontainer/devcontainer\\.json$/',
+      ],
       matchStrings: [
         '"(?<depName>[\\w-]+\\.[\\w-]+)@(?<currentValue>[0-9][^"]*)"',
       ],

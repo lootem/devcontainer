@@ -10,7 +10,7 @@
             "extensions": [
                 "ms-vscode-remote.vscode-remote-extensionpack",
                 "ms-vscode.remote-explorer",
-                "ms-azuretools.vscode-containers"
+                "ms-azuretools.vscode-containers@2.4.5"
             ],
             "settings": {
                 "extensions.autoCheckUpdates": false,
