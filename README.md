@@ -56,6 +56,26 @@ same options.
 | `--ref <ref>` | Use a specific branch, tag, or commit of the template. |
 | `-h`, `--help` | Show all options. |
 
+### Prefer a prebuilt image?
+
+If you just want a container to `docker run` and don't need `install.sh`'s
+generated project files, prebuilt images are published to Docker Hub for each
+language plus one with everything enabled:
+
+```bash
+docker pull lootem/devcontainer:python   # or go, js, dotnet
+docker pull lootem/devcontainer:all      # every language + cloud CLI
+```
+
+These are rolling tags (`:python`, `:go`, `:js`, `:dotnet`, `:all`) rebuilt on
+every Dockerfile change on `main` - there are no pinned/dated tags. If you need
+reproducible, pinned builds, use `install.sh`/the `curl` command above instead;
+that's the path with supply-chain gating (see below). Images are **amd64
+only** - on Apple Silicon or other arm64 hosts, run under emulation or use
+`install.sh` to build locally. The `:python`/`:go`/`:js`/`:dotnet` images don't
+include the AWS/Azure CLIs or PowerShell - only `:all` does. All images ship
+Claude Code pre-installed with auto-update disabled.
+
 ## What you get
 
 Once it finishes, your folder has everything needed to open in
