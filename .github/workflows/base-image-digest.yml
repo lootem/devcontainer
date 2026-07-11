@@ -16,7 +16,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # trixie is a rolling tag Renovate can't reliably date, so resolve the
       # digest and the image's age here and apply the same 7-day gate.
@@ -45,7 +45,7 @@ jobs:
       - name: Open PR
         if: steps.update.outputs.changed == 'true'
         id: cpr
-        uses: peter-evans/create-pull-request@v8.1.1
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.RENOVATE_TOKEN }}
           commit-message: 'chore(deps): bump devcontainers/base:trixie digest'
