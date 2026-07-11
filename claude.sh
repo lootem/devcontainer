@@ -9,7 +9,8 @@ set -euo pipefail
 CLAUDE_PARAMS=(
   "--setting-sources" "project"
   "--effort" "medium"
-  # "--model" "claude-sonnet-4-5"
+  "--permission-mode" "auto"
+  # "--model" "claude-sonnet-5"
 )
 
 # Path to your .env file (used only in api mode)
