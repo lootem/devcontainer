@@ -251,20 +251,25 @@ test_keys_edit_no_plaintext_on_gpg_failure() {
   local tmpdir; tmpdir="$(new_dir)"
   cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
   chmod +x "$d/claude.sh"
+  mkdir -p "$d/keys"
   echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
-  ( cd "$d" && printf '\ntestpass\ntestpass\n' | ./claude.sh keys init ) >/dev/null 2>&1
+  ( cd "$d" && KEYS_GPG="$d/keys/.env.keys.gpg" \
+    bash -c "printf '\ntestpass\ntestpass\n' | ./claude.sh keys init" ) >/dev/null 2>&1
 
-  # Make the existing .env.keys.gpg read-only so gpg can decrypt it (the
-  # read step) but fails to write the re-encrypted output back in place.
-  chmod 400 "$d/.env.keys.gpg"
-  if ( cd "$d" && TMPDIR="$tmpdir" \
+  # Read-only *directory* (not the file): gpg can still decrypt the existing
+  # keys file (r-x traversal), but the atomic re-encrypt can't create its temp
+  # in that dir, so the write fails and the original file must survive. (A
+  # read-only file alone wouldn't test this: the temp+rename write replaces the
+  # directory entry, which a writable dir permits regardless of file mode.)
+  chmod 500 "$d/keys"
+  if ( cd "$d" && TMPDIR="$tmpdir" KEYS_GPG="$d/keys/.env.keys.gpg" \
        bash -c "printf 'testpass\nANTHROPIC_API_KEY=sk-changed\n\n' | ./claude.sh keys edit" ) \
       >/tmp/test.sh.keys_edit_gpgfail.log 2>&1; then
     fail "claude.sh keys edit should fail when gpg can't write its output"
   else
     ok "claude.sh keys edit fails cleanly when gpg can't write its output"
   fi
-  chmod 600 "$d/.env.keys.gpg"
+  chmod 700 "$d/keys"
 
   if [ -z "$(ls -A "$tmpdir" 2>/dev/null)" ]; then
     ok "no leftover plaintext temp files after gpg failure"
@@ -273,7 +278,7 @@ test_keys_edit_no_plaintext_on_gpg_failure() {
   fi
 
   local decrypted
-  decrypted="$(cd "$d" && printf 'testpass\n' | gpg --batch --yes --passphrase-fd 0 --decrypt .env.keys.gpg 2>/dev/null)"
+  decrypted="$(printf 'testpass\n' | gpg --batch --yes --passphrase-fd 0 --decrypt "$d/keys/.env.keys.gpg" 2>/dev/null)"
   assert_contains <(printf '%s' "$decrypted") "ANTHROPIC_API_KEY=sk-test-abc"
 }
 
