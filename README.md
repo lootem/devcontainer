@@ -44,6 +44,36 @@ for a polyglot project. Leave the language off and it will simply ask you.
 Prefer to clone first? Grab this repo and run `./install.sh` directly with the
 same options.
 
+### Verify before you run
+
+`curl | bash` trusts three things at once: DNS, TLS, and whatever's sitting at
+that URL right now. The one-liner above is the convenience path - fine for
+casual use, but it never pauses to check any of that. If you want to verify
+provenance first:
+
+```bash
+# Pin to a commit sha instead of the floating "main" the plain one-liner uses.
+curl -fsSL https://ltm.sh/dev/<sha> -o install.sh
+
+# Requires the GitHub CLI (gh) and network access to github.com.
+gh attestation verify install.sh --repo lootem/devcontainer
+
+bash install.sh --language python
+```
+
+`ltm.sh/dev/<ref>` is a Cloudflare redirect rule that maps any branch, tag, or
+commit sha to `raw.githubusercontent.com/lootem/devcontainer/<ref>/install.sh`
+(bare `ltm.sh/dev`, with no ref segment, keeps redirecting to `main`). CI
+attests `install.sh` and `.devcontainer/update.sh` on every push to `main`
+(`.github/workflows/attest.yml`) via `actions/attest-build-provenance`, so
+`gh attestation verify` can confirm a given file came from a workflow run in
+this repo at a specific commit.
+
+That's a **provenance** guarantee, not a content-safety one - it proves origin
+and build, not that the script is benign. And it only holds if you verify the
+*same* ref the URL serves; pin both to the same commit sha, or the digests
+won't line up.
+
 ### Options
 
 | Option | What it does |
