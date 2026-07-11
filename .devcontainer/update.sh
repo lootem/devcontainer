@@ -106,7 +106,10 @@ while IFS= read -r arg_name; do
     PYTHON|GOLANG|NODEJS|DOTNET) LANGS+=("$token") ;;
     *)                           TOOLS+=("$token") ;;
   esac
-done < <(grep -oP '(?<=^ARG )[A-Z_]+(?==true)' "$DOCKERFILE")
+# NB: extract NAME from each `ARG NAME=true` line with sed, not a PCRE
+# lookbehind/lookahead — the -P flag is a GNU extension the BSD grep on macOS
+# (where this script commonly runs) does not support.
+done < <(sed -n -E 's/^ARG ([A-Z_]+)=true[[:space:]]*$/\1/p' "$DOCKERFILE")
 
 ARGS=(--target "$REPO_ROOT")
 [ ${#LANGS[@]} -gt 0 ] && ARGS+=(--language "$(IFS=,; echo "${LANGS[*]}")")
@@ -119,7 +122,10 @@ if [ -f "$DEVCONTAINER_JSON" ] && command -v jq >/dev/null 2>&1 \
   ARGS+=(--extensions)
 fi
 
-ARGS+=("${EXTRA_ARGS[@]}")
+# Guard the expansion: under `set -u`, macOS's bash 3.2 errors on "${arr[@]}"
+# when the array is empty (no `-- <args>` were passed). The ${arr[@]+...} form
+# expands to nothing when empty.
+ARGS+=(${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
 
 info "Detected languages: ${LANGS[*]:-none}"
 info "Detected tools: ${TOOLS[*]:-none}"
