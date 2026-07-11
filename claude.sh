@@ -59,17 +59,18 @@ read_secret() { # read_secret <prompt> -> prints the entered value
 
 # Reads KEY=VALUE lines until a blank line/EOF. A key with no value (`KEY=`)
 # deletes that key; otherwise later lines override earlier ones (including
-# lines from <seed-file>, if given). Prints the merged set, one KEY=VALUE per
-# line, sorted.
-prompt_kv() { # prompt_kv [seed-file] -> prints merged KEY=VALUE lines
+# lines from <seed-content>, if given). Prints the merged set, one KEY=VALUE
+# per line, sorted. Seed is passed as a string (never a file) so migrated /
+# decrypted secrets stay in memory.
+prompt_kv() { # prompt_kv [seed-content] -> prints merged KEY=VALUE lines
   local seed="${1:-}"
   local -A kv
   local key val line src
-  if [[ -n "$seed" && -f "$seed" ]]; then
+  if [[ -n "$seed" ]]; then
     while IFS='=' read -r key val; do
       [[ -z "$key" || "$key" == \#* ]] && continue
       kv["$key"]="$val"
-    done < "$seed"
+    done < <(printf '%s\n' "$seed")
   fi
   [[ "$HAVE_TTY" == true ]] && src="/dev/tty" || src="/dev/stdin"
   while IFS= read -r line; do
@@ -89,31 +90,30 @@ prompt_kv() { # prompt_kv [seed-file] -> prints merged KEY=VALUE lines
   done | sort
 }
 
-# ─── Secrets: decrypt-to-memory only, never written to disk ─────────────────
-TMP_CLEANUP=()
-cleanup_tmp() {
-  local f
-  for f in "${TMP_CLEANUP[@]:-}"; do
-    [[ -n "$f" && -f "$f" ]] || continue
-    if command -v shred >/dev/null 2>&1; then
-      shred -u "$f" 2>/dev/null || rm -f "$f"
-    else
-      : > "$f" 2>/dev/null || true
-      rm -f "$f"
-    fi
-  done
-}
-trap cleanup_tmp EXIT
+# ─── Secrets: gpg symmetric, no plaintext on disk, no passphrase cache ──────
+# --no-symkey-cache keeps the passphrase out of gpg-agent (the "no caching"
+# requirement — a cached passphrase is reachable by same-UID code, exactly the
+# threat this feature targets). --pinentry-mode loopback makes --passphrase-fd
+# work under any gpg-agent config. Plaintext is only ever passed through a pipe
+# or process substitution (anonymous /dev/fd, never a temp file); encryption is
+# staged to a sibling temp and atomically renamed, so a mid-write failure can't
+# destroy the only encrypted copy.
+GPG_COMMON=(--batch --yes --no-symkey-cache --pinentry-mode loopback --passphrase-fd 0)
 
-register_tmp() { TMP_CLEANUP+=("$1"); }
-
-gpg_encrypt() { # gpg_encrypt <plaintext-file> <passphrase>
-  printf '%s' "$2" | gpg --batch --yes --passphrase-fd 0 --symmetric --cipher-algo AES256 \
-    --output "$KEYS_GPG" "$1"
+gpg_encrypt() { # gpg_encrypt <passphrase> <plaintext>  -> writes $KEYS_GPG atomically
+  local pass="$1" plain="$2" tmp
+  tmp="$(mktemp "${KEYS_GPG}.XXXXXX")" || return 1
+  if printf '%s' "$pass" | gpg "${GPG_COMMON[@]}" --symmetric --cipher-algo AES256 \
+       --output "$tmp" <(printf '%s' "$plain"); then
+    mv -f "$tmp" "$KEYS_GPG"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 gpg_decrypt() { # gpg_decrypt <passphrase> -> prints decrypted content on stdout
-  printf '%s' "$1" | gpg --batch --yes --passphrase-fd 0 --decrypt "$KEYS_GPG" 2>/dev/null
+  printf '%s' "$1" | gpg "${GPG_COMMON[@]}" --decrypt "$KEYS_GPG" 2>/dev/null
 }
 
 new_passphrase() { # new_passphrase <verb> -> prints passphrase, dies on mismatch
@@ -135,55 +135,51 @@ load_keys_file() {
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
     export "$line"
-  done <<< "$decrypted"
+  done < <(printf '%s\n' "$decrypted")
   unset decrypted
 }
 
 # Vars whose name suggests a durable secret, auto-detected out of $ENV_FILE
 # for migration convenience. Not an allow-list for what the keys file may
 # hold — you can type any KEY=VALUE at the keys init/edit prompt regardless
-# of name (e.g. AWS_ACCESS_KEY_ID, which this pattern doesn't match).
-SECRET_NAME_PATTERN='^[A-Za-z_]*(TOKEN|API_KEY)[A-Za-z_]*=.+$'
+# of name. Covers *TOKEN*/*API_KEY*/*SECRET*/*ACCESS_KEY_ID* so AWS access
+# keys and secret keys migrate too, not just the Anthropic key.
+SECRET_NAME_PATTERN='^[A-Za-z_]*(TOKEN|API_KEY|SECRET|ACCESS_KEY_ID)[A-Za-z_]*=.+$'
 
 keys_init() {
   [[ -f "$KEYS_GPG" ]] && info "'${KEYS_GPG}' already exists; this will overwrite it."
 
-  local seed
-  seed="$(mktemp)"
-  register_tmp "$seed"
-  [[ -f "$ENV_FILE" ]] && grep -E "$SECRET_NAME_PATTERN" "$ENV_FILE" > "$seed" 2>/dev/null || true
+  local seed="" key
+  [[ -f "$ENV_FILE" ]] && seed="$(grep -E "$SECRET_NAME_PATTERN" "$ENV_FILE" 2>/dev/null || true)"
 
-  if [[ -s "$seed" ]]; then
+  if [[ -n "$seed" ]]; then
     info "Detected likely secrets in ${ENV_FILE} (will be migrated):"
-    while IFS='=' read -r key _; do info "  ${key}"; done < "$seed"
+    while IFS='=' read -r key _; do [[ -n "$key" ]] && info "  ${key}"; done < <(printf '%s\n' "$seed")
   fi
   info "Enter any other secrets as KEY=VALUE (e.g. AWS_ACCESS_KEY_ID=...)."
   info "Blank line/Ctrl-D to finish and encrypt into ${KEYS_GPG}."
 
-  local tmp
-  tmp="$(mktemp)"
-  register_tmp "$tmp"
-  chmod 600 "$tmp"
-  prompt_kv "$seed" > "$tmp"
+  local merged
+  merged="$(prompt_kv "$seed")"
 
-  grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$tmp" || die "No secret values provided; aborting keys init."
+  printf '%s\n' "$merged" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' \
+    || die "No secret values provided; aborting keys init."
 
   local pass
   pass="$(new_passphrase "encrypt")"
-  gpg_encrypt "$tmp" "$pass"
+  gpg_encrypt "$pass" "$merged" || { unset pass; die "Encryption failed; '${KEYS_GPG}' unchanged."; }
   unset pass
 
   # Whatever keys ended up in the keys file no longer belong in $ENV_FILE too —
-  # the encrypted file is the only on-disk copy.
+  # the encrypted file is the only on-disk copy. (Note: this scrub overwrites
+  # $ENV_FILE in place; it does not securely erase the old plaintext blocks.)
   if [[ -f "$ENV_FILE" ]]; then
-    local names pattern envtmp
-    names="$(grep -Eo '^[A-Za-z_][A-Za-z0-9_]*=' "$tmp" | sed 's/=$//' | sort -u)"
+    local names pattern scrubbed
+    names="$(printf '%s\n' "$merged" | grep -Eo '^[A-Za-z_][A-Za-z0-9_]*=' | sed 's/=$//' | sort -u)"
     if [[ -n "$names" ]]; then
       pattern="$(printf '%s\n' "$names" | paste -sd'|' -)"
-      envtmp="$(mktemp)"
-      register_tmp "$envtmp"
-      grep -Ev "^(${pattern})=" "$ENV_FILE" > "$envtmp" || true
-      mv "$envtmp" "$ENV_FILE"
+      scrubbed="$(grep -Ev "^(${pattern})=" "$ENV_FILE" || true)"
+      printf '%s\n' "$scrubbed" > "$ENV_FILE"
     fi
   fi
 
@@ -193,30 +189,25 @@ keys_init() {
 keys_edit() {
   [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './claude.sh keys init' first."
 
-  local pass current
+  local pass current key
   pass="$(read_secret "Passphrase for ${KEYS_GPG}: ")"
-  current="$(mktemp)"
-  register_tmp "$current"
-  chmod 600 "$current"
-  gpg_decrypt "$pass" > "$current" || die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"
+  current="$(gpg_decrypt "$pass")" || { unset pass; die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"; }
 
   info "Current secrets in ${KEYS_GPG}:"
   while IFS='=' read -r key _; do
     [[ -z "$key" || "$key" == \#* ]] && continue
     info "  ${key}"
-  done < "$current"
+  done < <(printf '%s\n' "$current")
   info "Type KEY=VALUE to add or replace one, KEY= (empty value) to remove one."
   info "Blank line/Ctrl-D to finish and save; anything untouched is kept as-is."
 
   local new
-  new="$(mktemp)"
-  register_tmp "$new"
-  chmod 600 "$new"
-  prompt_kv "$current" > "$new"
+  new="$(prompt_kv "$current")"
 
-  grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$new" || die "No secrets left; aborting (no changes written)."
+  printf '%s\n' "$new" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' \
+    || die "No secrets left; aborting (no changes written)."
 
-  gpg_encrypt "$new" "$pass"
+  gpg_encrypt "$pass" "$new" || { unset pass; die "Encryption failed; '${KEYS_GPG}' unchanged."; }
   unset pass
 
   info "'${KEYS_GPG}' updated."
