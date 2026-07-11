@@ -57,6 +57,38 @@ read_secret() { # read_secret <prompt> -> prints the entered value
   printf '%s' "$val"
 }
 
+# Reads KEY=VALUE lines until a blank line/EOF. A key with no value (`KEY=`)
+# deletes that key; otherwise later lines override earlier ones (including
+# lines from <seed-file>, if given). Prints the merged set, one KEY=VALUE per
+# line, sorted.
+prompt_kv() { # prompt_kv [seed-file] -> prints merged KEY=VALUE lines
+  local seed="${1:-}"
+  local -A kv
+  local key val line src
+  if [[ -n "$seed" && -f "$seed" ]]; then
+    while IFS='=' read -r key val; do
+      [[ -z "$key" || "$key" == \#* ]] && continue
+      kv["$key"]="$val"
+    done < "$seed"
+  fi
+  [[ "$HAVE_TTY" == true ]] && src="/dev/tty" || src="/dev/stdin"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && break
+    [[ "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    [[ -z "$key" ]] && continue
+    if [[ -z "$val" ]]; then
+      unset "kv[$key]"
+    else
+      kv["$key"]="$val"
+    fi
+  done < "$src"
+  for key in "${!kv[@]}"; do
+    printf '%s=%s\n' "$key" "${kv[$key]}"
+  done | sort
+}
+
 # ─── Secrets: decrypt-to-memory only, never written to disk ─────────────────
 TMP_CLEANUP=()
 cleanup_tmp() {
@@ -107,23 +139,32 @@ load_keys_file() {
   unset decrypted
 }
 
+# Vars whose name suggests a durable secret, auto-detected out of $ENV_FILE
+# for migration convenience. Not an allow-list for what the keys file may
+# hold — you can type any KEY=VALUE at the keys init/edit prompt regardless
+# of name (e.g. AWS_ACCESS_KEY_ID, which this pattern doesn't match).
+SECRET_NAME_PATTERN='^[A-Za-z_]*(TOKEN|API_KEY)[A-Za-z_]*=.+$'
+
 keys_init() {
   [[ -f "$KEYS_GPG" ]] && info "'${KEYS_GPG}' already exists; this will overwrite it."
+
+  local seed
+  seed="$(mktemp)"
+  register_tmp "$seed"
+  [[ -f "$ENV_FILE" ]] && grep -E "$SECRET_NAME_PATTERN" "$ENV_FILE" > "$seed" 2>/dev/null || true
+
+  if [[ -s "$seed" ]]; then
+    info "Detected likely secrets in ${ENV_FILE} (will be migrated):"
+    while IFS='=' read -r key _; do info "  ${key}"; done < "$seed"
+  fi
+  info "Enter any other secrets as KEY=VALUE (e.g. AWS_ACCESS_KEY_ID=...)."
+  info "Blank line/Ctrl-D to finish and encrypt into ${KEYS_GPG}."
 
   local tmp
   tmp="$(mktemp)"
   register_tmp "$tmp"
   chmod 600 "$tmp"
-
-  {
-    echo "# Secrets for claude.sh — one KEY=VALUE per line (e.g. ANTHROPIC_API_KEY=sk-...)."
-    echo "# Lines below were copied from ${ENV_FILE}; delete anything that should stay there."
-    echo "# Save and exit to encrypt whatever remains into ${KEYS_GPG}."
-    echo
-    [[ -f "$ENV_FILE" ]] && grep -E '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$ENV_FILE"
-  } > "$tmp" 2>/dev/null || true
-
-  "${EDITOR:-vi}" "$tmp"
+  prompt_kv "$seed" > "$tmp"
 
   grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$tmp" || die "No secret values provided; aborting keys init."
 
@@ -152,16 +193,30 @@ keys_init() {
 keys_edit() {
   [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './claude.sh keys init' first."
 
-  local pass plain
+  local pass current
   pass="$(read_secret "Passphrase for ${KEYS_GPG}: ")"
-  plain="$(mktemp)"
-  register_tmp "$plain"
-  chmod 600 "$plain"
-  gpg_decrypt "$pass" > "$plain" || die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"
+  current="$(mktemp)"
+  register_tmp "$current"
+  chmod 600 "$current"
+  gpg_decrypt "$pass" > "$current" || die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"
 
-  "${EDITOR:-vi}" "$plain"
+  info "Current secrets in ${KEYS_GPG}:"
+  while IFS='=' read -r key _; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    info "  ${key}"
+  done < "$current"
+  info "Type KEY=VALUE to add or replace one, KEY= (empty value) to remove one."
+  info "Blank line/Ctrl-D to finish and save; anything untouched is kept as-is."
 
-  gpg_encrypt "$plain" "$pass"
+  local new
+  new="$(mktemp)"
+  register_tmp "$new"
+  chmod 600 "$new"
+  prompt_kv "$current" > "$new"
+
+  grep -qE '^[A-Za-z_][A-Za-z0-9_]*=.+$' "$new" || die "No secrets left; aborting (no changes written)."
+
+  gpg_encrypt "$new" "$pass"
   unset pass
 
   info "'${KEYS_GPG}' updated."
