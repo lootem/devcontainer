@@ -66,6 +66,25 @@ PATCH_DIR="$(mktemp -d)"
 SCRATCH_DIRS+=("$PATCH_DIR")
 INSTALL="$(make_local_install)"
 
+# update.sh normally fetches install.sh from https://ltm.sh/dev/<ref>; for
+# tests, swap that one line for a direct call to the patched local install.sh.
+UPDATE_CURL_LINE='curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"'
+
+make_local_update() { # make_local_update <path-to-update.sh> -> patches it in place, prints its path
+  local src="$1"
+  grep -qF "$UPDATE_CURL_LINE" "$src" \
+    || { echo "test.sh: update.sh's curl line has changed — update UPDATE_CURL_LINE in test.sh" >&2; exit 1; }
+  # Patched in place (not copied elsewhere): update.sh locates its own repo
+  # root via its own path (BASH_SOURCE), so it must stay under .devcontainer/.
+  awk -v old="$UPDATE_CURL_LINE" -v install="$INSTALL" '
+    $0 == old { print "bash \"" install "\" \"${ARGS[@]}\""; next }
+    { print }
+  ' "$src" > "$src.tmp"
+  mv "$src.tmp" "$src"
+  chmod +x "$src"
+  printf '%s' "$src"
+}
+
 run_install() { # run_install <target> <args...>  -> runs patched install.sh non-interactively
   local target="$1"; shift
   bash "$INSTALL" --target "$target" "$@" </dev/null >/tmp/test.sh.last.log 2>&1 \
@@ -176,6 +195,53 @@ test_dotnet_scaffold() {
   assert_json_valid "$d/.vscode/settings.json"
   assert_json_valid "$d/.devcontainer/devcontainer.json"
   assert_contains "$d/.gitignore" '[Bb]in/'
+}
+
+test_tool_scaffold() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --tool awscli,azpwsh --force
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG AZPWSH=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG AZCLI=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG POWERSHELL=false'
+}
+
+test_tool_unknown_rejected() {
+  local d; d="$(new_dir)"
+  if run_install "$d" --tool bogus --force; then
+    fail "install.sh should reject an unknown --tool"
+  else
+    ok "install.sh rejects an unknown --tool"
+  fi
+}
+
+test_update_script_shipped_and_executable() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+  assert_file_exists "$d/.devcontainer/update.sh"
+  [ -x "$d/.devcontainer/update.sh" ] && ok "$d/.devcontainer/update.sh is executable" \
+    || fail "$d/.devcontainer/update.sh is not executable"
+}
+
+test_update_script_round_trip() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --tool awscli --force
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
+
+  local patched_update
+  patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
+  if ! ( cd "$d" && bash "$patched_update" -- --force ) >/tmp/test.sh.update.log 2>&1; then
+    echo "update.sh failed (see /tmp/test.sh.update.log):"
+    cat /tmp/test.sh.update.log
+    fail "update.sh ran successfully"
+    return
+  fi
+  ok "update.sh ran successfully"
+
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
 }
 
 test_verbatim_extras() {
@@ -300,6 +366,114 @@ EOF
   assert_contains /tmp/test.sh.api_mode.log "ANTHROPIC_API_KEY=sk-test-xyz"
 }
 
+test_renovate_regex_covers_pins() {
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  local renovate="$REPO_ROOT/renovate.json5"
+
+  # ARGs covered by the primary bare-ARG customManager's name alternation.
+  local alternation
+  alternation="$(grep -oP '(?<=\(\?:)[A-Z_|]+(?=\)=)' "$renovate")"
+
+  # ARGs handled by their own dedicated customManagers (version embedded in a URL).
+  local dedicated=" GO_URL NVM_URL "
+
+  local missing=0
+  while IFS= read -r arg_name; do
+    [ -z "$arg_name" ] && continue
+    case "$dedicated" in
+      *" $arg_name "*) continue ;;
+    esac
+    if echo "$alternation" | tr '|' '\n' | grep -qxF "$arg_name"; then
+      ok "renovate.json5 alternation covers ARG $arg_name"
+    else
+      fail "renovate.json5 alternation missing ARG $arg_name (has a # renovate: comment in Dockerfile but isn't matched)"
+      missing=$((missing+1))
+    fi
+  done < <(grep -A1 '# renovate:' "$dockerfile" | grep -oP '(?<=^ARG )[A-Z_]+(?==)')
+
+  [ "$missing" -eq 0 ] && ok "no renovate-commented ARGs are unmatched"
+}
+
+test_renovate_regex_covers_extension_pins() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  # Pull the extension customManager's matchStrings regex out of the JSON5
+  # source (a single-quoted string, one JSON5 backslash-escape level) and
+  # unescape it once so it can be used as a plain -P regex below.
+  local line regex
+  line="$(grep -n 'depName>\[' "$renovate" | cut -d: -f1)"
+  [ -n "$line" ] || { fail "renovate.json5: couldn't locate the extension pin matchStrings line"; return; }
+  regex="$(sed -n "${line}p" "$renovate" | sed -E "s/^ *'(.*)',?\$/\1/")"
+  regex="${regex//\\\\/\\}"
+
+  local missing=0
+  for f in "$REPO_ROOT"/templates/*/extensions.json; do
+    while IFS= read -r pin; do
+      [ -z "$pin" ] && continue
+      if echo "$pin" | grep -qP "$regex"; then
+        ok "renovate.json5 extension regex matches '$pin' in $(basename "$(dirname "$f")")"
+      else
+        fail "renovate.json5 extension regex misses '$pin' in $f"
+        missing=$((missing+1))
+      fi
+    done < <(grep -oP '"[\w-]+\.[\w-]+@[^"]+"' "$f")
+  done
+  [ "$missing" -eq 0 ] && ok "no pinned extensions are unmatched by the renovate.json5 custom manager"
+}
+
+test_extensions_no_duplicate_canonical() {
+  # A pinned "publisher.name@version" and an unpinned "publisher.name" of the
+  # same extension would both survive install.sh's `unique` dedup as distinct
+  # strings — guard against that ever happening across base + templates.
+  local seen=""
+  local dup=0
+  while IFS= read -r ext; do
+    [ -z "$ext" ] && continue
+    local canonical="${ext%@*}"
+    case "$seen" in
+      *" $canonical "*) fail "'$canonical' appears in more than one canonical form across extensions sources"; dup=$((dup+1)) ;;
+      *) seen="$seen $canonical " ;;
+    esac
+  done < <(jq -r '.customizations.vscode.extensions[]' "$REPO_ROOT/.devcontainer/devcontainer.json"; jq -r '.[]' "$REPO_ROOT"/templates/*/extensions.json)
+  [ "$dup" -eq 0 ] && ok "every extension appears in exactly one canonical form"
+}
+
+test_token_set_matches_dockerfile_args() {
+  # install.sh's --language/--tool tokens must cover every ARG the Dockerfile
+  # can toggle 1:1, or update.sh's ARG->token round-trip silently drops a
+  # feature (e.g. a hand-added CLI ARG with no corresponding flag).
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  local install="$REPO_ROOT/install.sh"
+
+  # Toggleable feature ARGs (default false). CLAUDECODE defaults true and
+  # isn't a --language/--tool selector.
+  local dockerfile_args
+  dockerfile_args="$(grep -oP '(?<=^ARG )[A-Z_]+(?==false)' "$dockerfile" | sort -u)"
+
+  # ARGs install.sh's lang_arg()/tool_arg() can produce.
+  local mapped_args
+  mapped_args="$(sed -n '/^lang_arg()/,/^}/p; /^tool_arg()/,/^}/p' "$install" \
+    | grep -oP '(?<=echo ")[A-Z_]+(?=")' | sort -u)"
+
+  local missing=0
+  while IFS= read -r a; do
+    [ -z "$a" ] && continue
+    if echo "$mapped_args" | grep -qxF "$a"; then
+      ok "install.sh has a --language/--tool token for Dockerfile ARG $a"
+    else
+      fail "Dockerfile ARG $a has no --language/--tool token (update.sh round-trip would drop it)"
+      missing=$((missing+1))
+    fi
+  done <<< "$dockerfile_args"
+
+  while IFS= read -r a; do
+    [ -z "$a" ] && continue
+    echo "$dockerfile_args" | grep -qxF "$a" \
+      || { fail "install.sh maps a token to ARG $a, but the Dockerfile has no 'ARG $a=false'"; missing=$((missing+1)); }
+  done <<< "$mapped_args"
+
+  [ "$missing" -eq 0 ] && ok "--language/--tool token set exactly matches flippable Dockerfile ARGs"
+}
+
 test_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
     echo "  skip - shellcheck not installed"
@@ -345,9 +519,12 @@ TESTS=(
   test_syntax
   test_fresh_scaffold
   test_dotnet_scaffold
+  test_tool_scaffold
+  test_tool_unknown_rejected
   test_verbatim_extras
   test_extensions_default_off
   test_extensions_opt_in
+  test_extensions_no_duplicate_canonical
   test_idempotent_skip
   test_gitignore_merge
   test_gitignore_secrets
@@ -357,7 +534,12 @@ TESTS=(
   test_keys_init_no_plaintext_on_gpg_failure
   test_keys_edit_no_plaintext_on_gpg_failure
   test_api_mode_decrypts_keys
+  test_update_script_shipped_and_executable
+  test_update_script_round_trip
   test_shellcheck
+  test_renovate_regex_covers_pins
+  test_renovate_regex_covers_extension_pins
+  test_token_set_matches_dockerfile_args
 )
 
 SUITE_FAILS=0

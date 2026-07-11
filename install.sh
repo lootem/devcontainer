@@ -20,6 +20,7 @@ FORCE=false
 WANT_SKILLS=false
 WANT_EXTENSIONS=false
 LANGS=()
+TOOLS=()
 
 # Language token → Dockerfile ARG name.
 lang_arg() {
@@ -32,6 +33,21 @@ lang_arg() {
   esac
 }
 VALID_LANGS="python go js dotnet"
+
+# Tool token → Dockerfile ARG name. Unlike languages, tools have no editor/
+# gitignore/extension templates — they only flip a Dockerfile ARG. Note:
+# azpwsh implies pwsh (the Dockerfile installs PowerShell if POWERSHELL or
+# AZPWSH is true), so passing both is unnecessary but harmless.
+tool_arg() {
+  case "$1" in
+    awscli) echo "AWSCLI" ;;
+    azcli)  echo "AZCLI" ;;
+    pwsh)   echo "POWERSHELL" ;;
+    azpwsh) echo "AZPWSH" ;;
+    *)      return 1 ;;
+  esac
+}
+VALID_TOOLS="awscli azcli pwsh azpwsh"
 
 # --- TTY-aware helpers ----------------------------------------------------------
 HAVE_TTY=false
@@ -89,11 +105,19 @@ add_langs() { # split a comma-separated list into LANGS
   done
 }
 
+add_tools() { # split a comma-separated list into TOOLS
+  local IFS=','
+  for t in $1; do
+    [ -n "$t" ] && TOOLS+=("$t")
+  done
+}
+
 usage() {
   cat <<EOF
 Usage: install.sh [options]
 
   -l, --language <list>  Comma-separated or repeated languages ($VALID_LANGS)
+  -T, --tool <list>      Comma-separated or repeated tools ($VALID_TOOLS)
       --skills           Copy skills/ into .claude/skills/ (default: off)
       --extensions       Add recommended VS Code extensions to devcontainer.json (default: off)
   -t, --target <dir>     Target directory (default: current directory)
@@ -108,6 +132,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -l|--language) add_langs "$2"; shift 2 ;;
     --language=*)  add_langs "${1#*=}"; shift ;;
+    -T|--tool)     add_tools "$2"; shift 2 ;;
+    --tool=*)      add_tools "${1#*=}"; shift ;;
     --skills)      WANT_SKILLS=true; shift ;;
     --extensions)  WANT_EXTENSIONS=true; shift ;;
     -t|--target)   TARGET="$2"; shift 2 ;;
@@ -144,6 +170,19 @@ done
 LANGS=("${CLEAN_LANGS[@]:-}")
 # Drop the empty placeholder that :-"" may leave when no langs selected.
 [ "${LANGS[0]:-}" = "" ] && LANGS=()
+
+# Validate & de-duplicate tool tokens.
+SEEN=" "
+CLEAN_TOOLS=()
+for t in "${TOOLS[@]}"; do
+  tool_arg "$t" >/dev/null 2>&1 || die "Unknown tool '$t'. Valid: $VALID_TOOLS"
+  case "$SEEN" in *" $t "*) continue ;; esac
+  SEEN="$SEEN$t "
+  CLEAN_TOOLS+=("$t")
+done
+TOOLS=("${CLEAN_TOOLS[@]:-}")
+# Drop the empty placeholder that :-"" may leave when no tools selected.
+[ "${TOOLS[0]:-}" = "" ] && TOOLS=()
 
 if [ "$WANT_SKILLS" = false ] && [ "$HAVE_TTY" = true ]; then
   case "$(ask 'Install Claude skills into .claude/skills/? [y/N] ')" in
@@ -310,8 +349,12 @@ merge_settings_json() { # merge_settings_json <dest>  (reads generated JSON on s
 # --- .devcontainer/ verbatim files -----------------------------------------------
 copy_verbatim "$DEVC/docker-compose.yml" "$TARGET/.devcontainer/docker-compose.yml"
 [ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"
+if [ -f "$DEVC/update.sh" ]; then
+  copy_verbatim "$DEVC/update.sh" "$TARGET/.devcontainer/update.sh"
+  [ -f "$TARGET/.devcontainer/update.sh" ] && chmod +x "$TARGET/.devcontainer/update.sh"
+fi
 
-# --- .devcontainer/Dockerfile with language ARGs flipped to true -----------------
+# --- .devcontainer/Dockerfile with language + tool ARGs flipped to true ---------
 DOCKERFILE_TMP="$SRC/Dockerfile.built"
 cp "$DEVC/Dockerfile" "$DOCKERFILE_TMP"
 for l in "${LANGS[@]}"; do
@@ -320,6 +363,14 @@ for l in "${LANGS[@]}"; do
   mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
   if ! grep -q "^ARG ${arg}=true" "$DOCKERFILE_TMP"; then
     die "Could not enable '$l' — no 'ARG ${arg}=false' line in Dockerfile."
+  fi
+done
+for t in "${TOOLS[@]}"; do
+  arg="$(tool_arg "$t")"
+  sed "s#^ARG ${arg}=false#ARG ${arg}=true#" "$DOCKERFILE_TMP" > "$DOCKERFILE_TMP.new"
+  mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
+  if ! grep -q "^ARG ${arg}=true" "$DOCKERFILE_TMP"; then
+    die "Could not enable '$t' — no 'ARG ${arg}=false' line in Dockerfile."
   fi
 done
 copy_verbatim "$DOCKERFILE_TMP" "$TARGET/.devcontainer/Dockerfile"
@@ -406,6 +457,7 @@ if [ ${#LANGS[@]} -gt 0 ]; then
 else
   info "Languages enabled: (none — base devcontainer only)"
 fi
+[ ${#TOOLS[@]} -gt 0 ] && info "Tools enabled: ${TOOLS[*]}"
 [ "$WANT_SKILLS" = true ] && info "Skills installed to .claude/skills/ (untracked)"
 [ "$WANT_EXTENSIONS" = true ] && info "Recommended VS Code extensions added to devcontainer.json"
 exit 0

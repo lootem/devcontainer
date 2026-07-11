@@ -7,22 +7,32 @@ FROM mcr.microsoft.com/devcontainers/base:trixie@sha256:1a00517e89d3075f8c9dc8d9
 # Set unconditionally — a missing directory on PATH is harmless.
 ENV PATH="/usr/local/go/bin:${PATH}" \
     GOROOT="/usr/local/go" \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    DISABLE_AUTOUPDATER=1
 
 # -- Base dependencies
-RUN apt-get update && apt-get upgrade -y && \
+# Cache mounts persist apt's own download cache across builds; the docker-clean
+# hook (which empties /var/cache/apt on every install) has to go first or the
+# mount never accumulates anything.
+RUN rm -f /etc/apt/apt.conf.d/docker-clean
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     wget curl git jq lsb-release net-tools \
     apt-transport-https bash unzip whois \
     libssl-dev gnupg2 iputils-ping ca-certificates \
-    && update-ca-certificates
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Use bash as the default shell
 RUN ln -sf /bin/bash /bin/sh
 
 # -- Claude Code
 ARG CLAUDECODE=true
-RUN if [ "$CLAUDECODE" = "true" ]; then \
+# renovate: datasource=npm depName=@anthropic-ai/claude-code
+ARG CLAUDE_VER=2.1.201
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
     curl -fsSL https://downloads.claude.ai/keys/claude-code.asc \
     -o /etc/apt/keyrings/claude-code.asc && \
@@ -34,25 +44,28 @@ RUN if [ "$CLAUDECODE" = "true" ]; then \
     https://downloads.claude.ai/claude-code/apt/stable stable main" \
     | tee /etc/apt/sources.list.d/claude-code.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends claude-code;\
+    apt-get install -y --no-install-recommends claude-code && \
+    rm -rf /var/lib/apt/lists/*; \
     fi
 USER vscode
 RUN if [ "$CLAUDECODE" = "true" ]; then \
-    /usr/bin/claude install; \
+    /usr/bin/claude install $CLAUDE_VER; \
     fi
 USER root
 # -- End Claude Code
 
 # -- Go
-ARG GOLANG=true
+ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
 ARG GO_URL=https://go.dev/dl/go1.26.4.linux-amd64.tar.gz
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 
-RUN if [ "$GOLANG" = "true" ]; then \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    if [ "$GOLANG" = "true" ]; then \
     apt-get update && \
     apt-get install -y --no-install-recommends build-essential make mingw-w64 && \
+    rm -rf /var/lib/apt/lists/* && \
     curl -fsSL "${GO_URL}" | tar -xz -C /usr/local;\
     fi
 USER vscode
@@ -67,10 +80,13 @@ ARG PYTHON=false
 # renovate: datasource=pypi depName=poetry
 ARG POETRY_VER=2.4.1
 
-RUN if [ "$PYTHON" = "true" ]; then \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    if [ "$PYTHON" = "true" ]; then \
     apt-get update && \
     apt-get install -y --no-install-recommends python3 python3-pip \
     python3-venv python3-dev pipx && \
+    rm -rf /var/lib/apt/lists/* && \
     pipx ensurepath && \
     pipx install poetry==$POETRY_VER;\
     fi
@@ -88,7 +104,8 @@ ARG BUN_VER=1.3.14
 ARG PNPM_VER=11.9.0
 
 USER vscode
-RUN if [ "$NODEJS" = "true" ]; then \
+RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
+    if [ "$NODEJS" = "true" ]; then \
     curl -o- "${NVM_URL}" | bash && \
     . /home/vscode/.nvm/nvm.sh && \
     nvm install $NODE_VER && \
@@ -104,12 +121,14 @@ ARG DOTNET=false
 # renovate: datasource=dotnet-version depName=dotnet-sdk
 ARG DOTNET_VER=10.0
 
-RUN if [ "$DOTNET" = "true" ]; then \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    if [ "$DOTNET" = "true" ]; then \
     wget https://packages.microsoft.com/config/debian/13/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
     sudo dpkg -i packages-microsoft-prod.deb && \
     rm packages-microsoft-prod.deb && \
     apt-get update && \
-    apt-get install -y --no-install-recommends dotnet-sdk-$DOTNET_VER; \
+    apt-get install -y --no-install-recommends dotnet-sdk-$DOTNET_VER && \
+    rm -rf /var/lib/apt/lists/*; \
     fi
 # End .NET
 
@@ -118,7 +137,8 @@ ARG AZCLI=false
 # renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
 ARG AZ_VER=2.87.0
 
-RUN if [ "$AZCLI" = "true" ]; then \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    if [ "$AZCLI" = "true" ]; then \
     mkdir -p /etc/apt/keyrings && \
     curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
     | gpg --dearmor | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
@@ -128,7 +148,8 @@ RUN if [ "$AZCLI" = "true" ]; then \
     "${AZ_DIST}" "$(dpkg --print-architecture)" \
     | tee /etc/apt/sources.list.d/azure-cli.sources && \
     apt-get update && \
-    apt-get install -y --no-install-recommends azure-cli=$AZ_VER-1~${AZ_DIST}; \
+    apt-get install -y --no-install-recommends azure-cli=$AZ_VER-1~${AZ_DIST} && \
+    rm -rf /var/lib/apt/lists/*; \
     fi
 # End AZCLI
 
@@ -140,11 +161,13 @@ ARG PWSH_VER=7.6.3
 # renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2
 ARG AZPWSH_VER=15.1.0
 
-RUN if [ "$POWERSHELL" = "true" ] || [ "$AZPWSH" = "true" ]; then \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    if [ "$POWERSHELL" = "true" ] || [ "$AZPWSH" = "true" ]; then \
     wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VER}/powershell_${PWSH_VER}-1.deb_amd64.deb" -O /tmp/powershell.deb && \
     dpkg -i /tmp/powershell.deb; \
     apt-get install -f -y && \
-    rm /tmp/powershell.deb; \
+    rm /tmp/powershell.deb && \
+    rm -rf /var/lib/apt/lists/*; \
     fi
 RUN if [ "$AZPWSH" = "true" ]; then \
     pwsh -Command "Install-Module -Name Az -RequiredVersion $AZPWSH_VER -Repository PSGallery -Force"; \
@@ -153,7 +176,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 
 # -- AWS CLI
 ARG AWSCLI=false
-# renovate: datasource=github-releases depName=aws/aws-cli
+# renovate: datasource=github-tags depName=aws/aws-cli
 ARG AWS_VER=2.35.14
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
@@ -173,5 +196,3 @@ RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     rm -rf /tmp/awscliv2.zip /tmp/awscliv2.sig /tmp/aws; \
     fi
 # End AWS CLI
-
-RUN rm -rf /var/lib/apt/lists/*

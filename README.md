@@ -44,17 +44,92 @@ for a polyglot project. Leave the language off and it will simply ask you.
 Prefer to clone first? Grab this repo and run `./install.sh` directly with the
 same options.
 
+### Verify before you run
+
+`curl | bash` trusts three things at once: DNS, TLS, and whatever's sitting at
+that URL right now. The one-liner above is the convenience path - fine for
+casual use, but it never pauses to check any of that. If you want to verify
+provenance first:
+
+```bash
+# Pin to a commit sha instead of the floating "main" the plain one-liner uses.
+curl -fsSL https://ltm.sh/dev/<sha> -o install.sh
+
+# Requires the GitHub CLI (gh) and network access to github.com.
+gh attestation verify install.sh --repo lootem/devcontainer
+
+bash install.sh --language python
+```
+
+`ltm.sh/dev/<ref>` is a Cloudflare redirect rule that maps any branch, tag, or
+commit sha to `raw.githubusercontent.com/lootem/devcontainer/<ref>/install.sh`
+(bare `ltm.sh/dev`, with no ref segment, keeps redirecting to `main`). CI
+attests `install.sh` and `.devcontainer/update.sh` on every push to `main`
+(`.github/workflows/attest.yml`) via `actions/attest-build-provenance`, so
+`gh attestation verify` can confirm a given file came from a workflow run in
+this repo at a specific commit.
+
+That's a **provenance** guarantee, not a content-safety one - it proves origin
+and build, not that the script is benign. And it only holds if you verify the
+*same* ref the URL serves; pin both to the same commit sha, or the digests
+won't line up.
+
 ### Options
 
 | Option | What it does |
 | --- | --- |
 | `-l`, `--language <list>` | Language(s) to set up: `python`, `go`, `js`, `dotnet`. Combine with commas, or omit to be prompted. |
+| `-T`, `--tool <list>` | Cloud/shell tool(s) to set up: `awscli`, `azcli`, `pwsh`, `azpwsh`. Combine with commas. |
 | `--skills` | Also bring along the curated Claude Code skills. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to the current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
 | `--repo <owner/repo>` | Pull the template from a different repo (defaults to `lootem/devcontainer`). |
 | `--ref <ref>` | Use a specific branch, tag, or commit of the template. |
 | `-h`, `--help` | Show all options. |
+
+Enabling a tool only flips its Dockerfile build arg — there are no editor
+settings or `.gitignore` entries tied to them, unlike languages. `azpwsh`
+implies `pwsh` (the Dockerfile installs PowerShell if either `POWERSHELL` or
+`AZPWSH` is true), so you don't need to pass both.
+
+### Keeping a generated repo up to date
+
+Every generated repo gets a `.devcontainer/update.sh`. It detects whichever
+languages, tools, `--skills`, and `--extensions` you currently have enabled
+and re-runs `install.sh` against them, so you don't have to remember your
+original flags to pick up upstream changes:
+
+```bash
+.devcontainer/update.sh                 # re-sync against lootem/devcontainer@main
+.devcontainer/update.sh --ref <sha>     # pin to a specific commit
+.devcontainer/update.sh -- --force      # forward extra flags (e.g. --force) to install.sh
+```
+
+It's manual only - there's no devcontainer lifecycle hook running `curl|bash`
+on your behalf. Note that re-syncing resets `.devcontainer/Dockerfile`'s
+pinned tool versions to whatever the target ref currently pins upstream;
+that's expected, since a generated repo has no Renovate config of its own to
+bump those pins independently.
+
+### Prefer a prebuilt image?
+
+If you just want a container to `docker run` and don't need `install.sh`'s
+generated project files, prebuilt images are published to Docker Hub for each
+language plus one with everything enabled:
+
+```bash
+docker pull lootemsec/devcontainer:python   # or go, js, dotnet
+docker pull lootemsec/devcontainer:all      # every language + cloud CLI
+```
+
+These are rolling tags (`:python`, `:go`, `:js`, `:dotnet`, `:all`) rebuilt on
+every Dockerfile change on `main` - there are no pinned/dated tags. If you need
+reproducible, pinned builds, use `install.sh`/the `curl` command above instead;
+that's the path with supply-chain gating (see below). Images are **amd64
+only** - on Apple Silicon or other arm64 hosts, run under emulation or use
+`install.sh` to build locally. The `:python`/`:go`/`:js`/`:dotnet` images don't
+include the AWS/Azure CLIs or PowerShell - only `:all` does. All images ship
+Claude Code pre-installed with auto-update disabled.
 
 ## What you get
 
@@ -133,3 +208,26 @@ merges blindly:
 - **The container has to actually build first.** Every bump PR runs
   `.github/workflows/build.yml`, which builds the Dockerfile with every
   feature flag on, before it's allowed to merge.
+
+### VS Code extensions: pinned where possible, floating otherwise
+
+The recommended extensions in `templates/*/extensions.json` get the same
+gated-update treatment where it's available:
+
+- **Extensions available on [OpenVSX](https://open-vsx.org) are pinned** to an
+  exact version (`publisher.name@x.y.z`) and tracked by Renovate through a
+  custom OpenVSX datasource, since Renovate has no built-in VS Code extension
+  updater. This is decided by OpenVSX availability, not publisher — several
+  Microsoft-published extensions (`ms-python.python`, `ms-python.black-formatter`,
+  `ms-vscode.makefile-tools`) publish there and so are pinned. They go through
+  the same major-bump-never, 7-day-gate, build-must-pass rules as everything else.
+- **Extensions not on OpenVSX are left unpinned** (e.g. the Remote Development
+  pack, `ms-azuretools.vscode-containers`, `ms-dotnettools.vscode-dotnet-pack`,
+  Pylance) - Renovate has no datasource that can track them, so they float at
+  whatever version the Marketplace serves. Since `extensions.autoUpdate` and
+  `extensions.autoCheckUpdates` are both off in the generated
+  `devcontainer.json`, they won't silently update inside a running container
+  either - they're just not gated by this template's update flow.
+- If you generate a project without a fork of this template and its own
+  Renovate config, pinned versions freeze at generation time; rerun
+  `./install.sh -f` against a newer template ref to pick up updates.

@@ -1,5 +1,5 @@
 [
-    "esbenp.prettier-vscode",
-    "yoavbls.pretty-ts-errors",
-    "bradlc.vscode-tailwindcss"
+    "esbenp.prettier-vscode@12.4.0",
+    "yoavbls.pretty-ts-errors@0.8.7",
+    "bradlc.vscode-tailwindcss@0.14.28"
 ]

@@ -1,4 +1,4 @@
 [
-    "ms-python.python",
-    "ms-python.black-formatter"
+    "ms-python.python@2026.4.0",
+    "ms-python.black-formatter@2025.2.0"
 ]
