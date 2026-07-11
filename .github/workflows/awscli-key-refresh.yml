@@ -1,0 +1,116 @@
+name: AWS CLI GPG Key Refresh
+
+on:
+  schedule:
+    # Monthly. AWS re-signs the AWS CLI signing key ~yearly to extend its
+    # expiry (same fingerprint, new self-signature). A monthly poll opens the
+    # refresh PR weeks/months before the pinned key expires, avoiding the
+    # silent build break that hits when gpg --verify runs against an expired
+    # key. Offset from the Monday Renovate/base-image runs so nothing races.
+    - cron: '0 11 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # Stable primary-key fingerprint; never changes across re-signs. Matches
+  # EXPECTED in .devcontainer/Dockerfile.
+  EXPECTED: FB5DB77FD5C118B80511ADA8A6310ACC4672475C
+  KEY_ID: A6310ACC4672475C
+  DOCS_URL: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-version.html
+  KEY_FILE: .devcontainer/awscli.pub
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Fetch, validate, and compare key
+        id: check
+        run: |
+          set -euo pipefail
+
+          # --- Expiry of the currently pinned key ---
+          OLD_HOME=$(mktemp -d)
+          GNUPGHOME="$OLD_HOME" gpg --batch --import "$KEY_FILE"
+          CUR_EXP=$(GNUPGHOME="$OLD_HOME" gpg --batch --with-colons --list-keys "$KEY_ID" \
+            | awk -F: '/^pub/{print $7; exit}')
+
+          # --- Extract the candidate key block from the AWS docs page ---
+          # The block is embedded verbatim in the HTML; strip the inline tags
+          # that wrap the first/last lines and any leading indentation. Base64
+          # and armor lines never carry meaningful leading whitespace, so this
+          # reconstructs a clean ASCII-armored block.
+          curl -fsSL "$DOCS_URL" -o docs.html
+          awk '/-----BEGIN PGP PUBLIC KEY BLOCK-----/{f=1} f{print} /-----END PGP PUBLIC KEY BLOCK-----/{if(f)exit}' docs.html \
+            | sed -e 's/<[^>]*>//g' -e 's/^[[:space:]]*//' > fetched.pub
+
+          if ! grep -q -- '-----END PGP PUBLIC KEY BLOCK-----' fetched.pub; then
+            echo "::error::Could not extract a PGP key block from $DOCS_URL (page layout changed?)"
+            exit 1
+          fi
+
+          # --- Validate the candidate key the same way the Dockerfile does ---
+          NEW_HOME=$(mktemp -d)
+          export GNUPGHOME="$NEW_HOME"
+          gpg --batch --import fetched.pub
+          ACTUAL=$(gpg --fingerprint "$KEY_ID" 2>/dev/null | grep -A1 "pub" | tail -1 | tr -d ' ')
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Fetched key fingerprint $ACTUAL != expected $EXPECTED"
+            exit 1
+          fi
+
+          # Prove the fetched key actually verifies a real AWS artifact and is
+          # not itself expired (gpg --verify exits non-zero on an expired key).
+          # A green run here guarantees the Docker build's verify step passes.
+          curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip.sig -o a.sig
+          curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o a.zip
+          gpg --verify a.sig a.zip
+          rm -f a.sig a.zip
+
+          NEW_EXP=$(gpg --batch --with-colons --list-keys "$KEY_ID" \
+            | awk -F: '/^pub/{print $7; exit}')
+
+          echo "cur_exp=$CUR_EXP" >> "$GITHUB_OUTPUT"
+          echo "new_exp=$NEW_EXP" >> "$GITHUB_OUTPUT"
+          echo "cur_date=$(date -u -d "@$CUR_EXP" +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "new_date=$(date -u -d "@$NEW_EXP" +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+          # Only bump when the fetched key extends expiry — ignores cosmetic
+          # re-encodings and avoids churn.
+          if [ "$NEW_EXP" -gt "$CUR_EXP" ]; then
+            cp fetched.pub "$KEY_FILE"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          rm -f docs.html fetched.pub
+
+      - name: Open PR
+        if: steps.check.outputs.changed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+          commit-message: 'chore(deps): refresh AWS CLI GPG signing key'
+          title: 'chore(deps): refresh AWS CLI GPG signing key (expiry ${{ steps.check.outputs.cur_date }} → ${{ steps.check.outputs.new_date }})'
+          body: |
+            AWS re-signed the AWS CLI PGP signing key, extending its expiry.
+
+            - Fingerprint (unchanged): `${{ env.EXPECTED }}`
+            - Expiry: `${{ steps.check.outputs.cur_date }}` → `${{ steps.check.outputs.new_date }}`
+            - Source: ${{ env.DOCS_URL }}
+
+            The fetched key was verified against a live AWS CLI artifact with
+            `gpg --verify` (the same check `.devcontainer/Dockerfile` runs), so
+            this refresh is guaranteed to keep the Docker build's verify step
+            passing. `EXPECTED` in the Dockerfile needs no change.
+          branch: refresh-awscli-gpg-key
+          delete-branch: true
+
+      - name: Enable automerge
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        env:
+          GH_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+        run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-url }}"
