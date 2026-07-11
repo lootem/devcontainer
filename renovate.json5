@@ -46,5 +46,25 @@
         '# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>nvm-sh/nvm)\\s+ARG NVM_URL=https://raw\\.githubusercontent\\.com/nvm-sh/nvm/(?<currentValue>v[0-9.]+)/install\\.sh',
       ],
     },
+    {
+      // VS Code extension pins in templates/*/extensions.json, "publisher.name@x.y.z".
+      // Only OSS extensions available on OpenVSX get pinned this way; Microsoft/
+      // proprietary ones are left as bare, unpinned strings (see README).
+      customType: 'regex',
+      managerFilePatterns: ['/^templates/[^/]+/extensions\\.json$/'],
+      matchStrings: [
+        '"(?<depName>[\\w-]+\\.[\\w-]+)@(?<currentValue>[0-9][^"]*)"',
+      ],
+      datasourceTemplate: 'openvsx',
+      packageNameTemplate: '{{replace depName "." "/"}}',
+    },
   ],
+  // OpenVSX has no native Renovate datasource (renovatebot/renovate#31388), so
+  // extension pins are tracked via this JSON custom datasource instead.
+  customDatasources: {
+    openvsx: {
+      defaultRegistryUrlTemplate: 'https://open-vsx.org/api/{{packageName}}',
+      transformTemplates: ['{"releases": [{"version": version}]}'],
+    },
+  },
 }

@@ -1,4 +1,4 @@
 [
     "ms-vscode.makefile-tools",
-    "golang.go"
+    "golang.go@0.54.0"
 ]

@@ -328,6 +328,49 @@ test_renovate_regex_covers_pins() {
   [ "$missing" -eq 0 ] && ok "no renovate-commented ARGs are unmatched"
 }
 
+test_renovate_regex_covers_extension_pins() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  # Pull the extension customManager's matchStrings regex out of the JSON5
+  # source (a single-quoted string, one JSON5 backslash-escape level) and
+  # unescape it once so it can be used as a plain -P regex below.
+  local line regex
+  line="$(grep -n 'depName>\[' "$renovate" | cut -d: -f1)"
+  [ -n "$line" ] || { fail "renovate.json5: couldn't locate the extension pin matchStrings line"; return; }
+  regex="$(sed -n "${line}p" "$renovate" | sed -E "s/^ *'(.*)',?\$/\1/")"
+  regex="${regex//\\\\/\\}"
+
+  local missing=0
+  for f in "$REPO_ROOT"/templates/*/extensions.json; do
+    while IFS= read -r pin; do
+      [ -z "$pin" ] && continue
+      if echo "$pin" | grep -qP "$regex"; then
+        ok "renovate.json5 extension regex matches '$pin' in $(basename "$(dirname "$f")")"
+      else
+        fail "renovate.json5 extension regex misses '$pin' in $f"
+        missing=$((missing+1))
+      fi
+    done < <(grep -oP '"[\w-]+\.[\w-]+@[^"]+"' "$f")
+  done
+  [ "$missing" -eq 0 ] && ok "no pinned extensions are unmatched by the renovate.json5 custom manager"
+}
+
+test_extensions_no_duplicate_canonical() {
+  # A pinned "publisher.name@version" and an unpinned "publisher.name" of the
+  # same extension would both survive install.sh's `unique` dedup as distinct
+  # strings — guard against that ever happening across base + templates.
+  local seen=""
+  local dup=0
+  while IFS= read -r ext; do
+    [ -z "$ext" ] && continue
+    local canonical="${ext%@*}"
+    case "$seen" in
+      *" $canonical "*) fail "'$canonical' appears in more than one canonical form across extensions sources"; dup=$((dup+1)) ;;
+      *) seen="$seen $canonical " ;;
+    esac
+  done < <(jq -r '.customizations.vscode.extensions[]' "$REPO_ROOT/.devcontainer/devcontainer.json"; jq -r '.[]' "$REPO_ROOT"/templates/*/extensions.json)
+  [ "$dup" -eq 0 ] && ok "every extension appears in exactly one canonical form"
+}
+
 test_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
     echo "  skip - shellcheck not installed"
@@ -376,6 +419,7 @@ TESTS=(
   test_verbatim_extras
   test_extensions_default_off
   test_extensions_opt_in
+  test_extensions_no_duplicate_canonical
   test_idempotent_skip
   test_gitignore_merge
   test_gitignore_secrets
@@ -387,6 +431,7 @@ TESTS=(
   test_api_mode_decrypts_keys
   test_shellcheck
   test_renovate_regex_covers_pins
+  test_renovate_regex_covers_extension_pins
 )
 
 SUITE_FAILS=0
