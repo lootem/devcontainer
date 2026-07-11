@@ -3,5 +3,6 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
+    entrypoint: sleep infinity
     volumes:
       - ..:/app

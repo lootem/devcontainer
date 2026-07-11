@@ -11,7 +11,18 @@
                 "ms-vscode-remote.vscode-remote-extensionpack",
                 "ms-vscode.remote-explorer",
                 "ms-azuretools.vscode-containers"
-            ]
+            ],
+            "settings": {
+                "extensions.autoCheckUpdates": false,
+                "extensions.autoUpdate": false,
+                "editor.formatOnSave": true,
+                "editor.wordWrap": "on",
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit",
+                    "source.unusedImports": "explicit"
+                },
+                "files.trimTrailingWhitespace": true
+            }
         }
     }
 }
