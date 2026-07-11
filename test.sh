@@ -509,27 +509,50 @@ test_ask_yn_all_sticks_across_subshell() {
   unset -f drive
 }
 
-test_empty_array_iteration_guarded() {
-  # macOS's default /bin/bash is 3.2, where `set -u` (which install.sh enables)
+test_empty_array_expansions_guarded() {
+  # macOS's default /bin/bash is 3.2, where `set -u` (which these scripts enable)
   # turns expansion of an EMPTY array — "${arr[@]}" — into a fatal "unbound
   # variable" error. Bash 4.4+ (what CI runs) silently tolerates it, so this
-  # regression can't be reproduced by running install.sh here — guard it
-  # statically instead. LANGS/TOOLS are routinely empty (blank language prompt,
-  # or no --tool), so every iteration over an empty-capable array must use the
-  # ${arr[@]+"${arr[@]}"} guard, which expands to nothing when the array is empty.
-  local install="$REPO_ROOT/install.sh"
-  local names bad=0
-  names="$(grep -oE '^[A-Za-z_]+=\(\)' "$install" | sed 's/=()//')"
-  while IFS= read -r name; do
-    [ -z "$name" ] && continue
-    local hits
-    hits="$(grep -nF "in \"\${$name[@]}\"" "$install" || true)"
+  # regression can't be reproduced by running the scripts here — guard it
+  # statically instead. Arrays declared empty with `NAME=()` can still be empty
+  # at use (blank language prompt, no --tool, no `-- <args>`), so EVERY
+  # "${NAME[@]}" expansion — for-loop, append, or command args — must use the
+  # ${NAME[@]+"${NAME[@]}"} guard, which expands to nothing when empty.
+  local scripts=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh")
+  local bad=0 f names name hits
+  for f in "${scripts[@]}"; do
+    names="$(grep -oE '^[A-Za-z_]+=\(\)' "$f" | sed 's/=()//')"
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      # Flag a bare "${NAME[@]}" NOT preceded by '+'. The guarded form
+      # ${NAME[@]+"${NAME[@]}"} contains its own "${NAME[@]}" but preceded by
+      # '+', so it's excluded; ${#NAME[@]}, ${NAME[*]} and ${NAME[@]:-} never match.
+      hits="$(grep -nE "[^+]\"\\\$\\{${name}\\[@\\]\\}\"" "$f" || true)"
+      if [ -n "$hits" ]; then
+        fail "$(basename "$f"): bare \"\${$name[@]}\" crashes on bash 3.2 — use \${$name[@]+\"\${$name[@]}\"}: $hits"
+        bad=$((bad+1))
+      fi
+    done <<< "$names"
+  done
+  [ "$bad" -eq 0 ] && ok "all empty-capable array expansions use the bash-3.2 nounset guard"
+}
+
+test_no_pcre_grep_in_shipped_scripts() {
+  # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
+  # shipped into generated repos that relies on it dies with "invalid option
+  # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh")
+  local bad=0 f hits
+  for f in "${shipped[@]}"; do
+    [ -f "$f" ] || continue
+    # Ignore comment-only lines so a doc reference to grep -P isn't a false hit.
+    hits="$(grep -nE 'grep +-[a-zA-Z]*P' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
     if [ -n "$hits" ]; then
-      fail "bare \"\${$name[@]}\" iteration crashes on bash 3.2 — use \${$name[@]+\"\${$name[@]}\"}: $hits"
+      fail "$(basename "$f"): uses non-portable 'grep -P' (fails on macOS BSD grep): $hits"
       bad=$((bad+1))
     fi
-  done <<< "$names"
-  [ "$bad" -eq 0 ] && ok "all empty-capable array iterations use the bash-3.2 nounset guard"
+  done
+  [ "$bad" -eq 0 ] && ok "no shipped script relies on GNU-only 'grep -P'"
 }
 
 test_shellcheck() {
@@ -585,7 +608,8 @@ TESTS=(
   test_extensions_no_duplicate_canonical
   test_idempotent_skip
   test_ask_yn_all_sticks_across_subshell
-  test_empty_array_iteration_guarded
+  test_empty_array_expansions_guarded
+  test_no_pcre_grep_in_shipped_scripts
   test_gitignore_merge
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing
