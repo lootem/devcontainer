@@ -72,11 +72,17 @@ ask() { # ask "prompt" -> prints the answer (empty if no tty)
 # Sticky answer once the user picks "all"/"none" at any ask_yn prompt, so they
 # aren't asked the same yes/no question repeatedly (e.g. once per gitignore
 # or settings.json key conflict).
-ANSWER_ALL=""
+#
+# It's kept in a FILE, not a shell variable, on purpose: ask_yn is always
+# invoked inside command substitution ("$(ask_yn ...)"), and its callers
+# (write_from_stdin/merge_*) often run on the right side of a pipe — both are
+# subshells, so a plain `ANSWER_ALL=yes` assignment would vanish when the
+# subshell exits and the choice would never stick. A file survives across them.
+ANSWER_ALL_FILE=""   # set once we have a temp dir (see below); empty = disabled
 
 ask_yn() { # ask_yn "prompt text (no trailing ?)" -> echoes "yes" or "no"
-  if [ -n "$ANSWER_ALL" ]; then
-    printf '%s' "$ANSWER_ALL"
+  if [ -n "$ANSWER_ALL_FILE" ] && [ -s "$ANSWER_ALL_FILE" ]; then
+    cat "$ANSWER_ALL_FILE"
     return
   fi
   if [ "$FORCE" = true ]; then
@@ -91,8 +97,8 @@ ask_yn() { # ask_yn "prompt text (no trailing ?)" -> echoes "yes" or "no"
   ans="$(ask "$1? [y/N/a=yes-to-all/o=no-to-all] ")"
   case "$ans" in
     y|Y|yes)  printf 'yes' ;;
-    a|A|all)  ANSWER_ALL=yes; printf 'yes' ;;
-    o|O|none) ANSWER_ALL=no;  printf 'no' ;;
+    a|A|all)  [ -n "$ANSWER_ALL_FILE" ] && printf 'yes' > "$ANSWER_ALL_FILE"; printf 'yes' ;;
+    o|O|none) [ -n "$ANSWER_ALL_FILE" ] && printf 'no'  > "$ANSWER_ALL_FILE"; printf 'no'  ;;
     *)        printf 'no' ;;
   esac
 }
@@ -228,6 +234,9 @@ ensure_cmd jq
 
 # --- Clone source repo ----------------------------------------------------------
 SRC="$(mktemp -d)"
+# Back the sticky yes-to-all/no-to-all choice with a file under $SRC so it
+# survives the subshells ask_yn runs in (see the ANSWER_ALL_FILE note above).
+ANSWER_ALL_FILE="$SRC/.answer_all"
 cleanup() { rm -rf "$SRC"; }
 trap cleanup EXIT
 
