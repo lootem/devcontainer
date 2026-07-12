@@ -145,17 +145,29 @@ make_local_update() { # make_local_update <path-to-update.sh> -> patches it in p
   printf '%s' "$src"
 }
 
-# Surgical update.sh (the default mode) fetches upstream's Dockerfile +
-# devcontainer.json via fetch_upstream(); for tests, swap that function's body
-# for a `cp` from a local fixture "upstream" .devcontainer/ dir instead.
-UPDATE_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <relative-path-under-.devcontainer> <dest>'
+# Surgical update.sh (the default mode) fetches upstream files (repo-relative
+# paths: .devcontainer/Dockerfile, .devcontainer/devcontainer.json, and each
+# enabled language's templates/<lang>/extensions.json) via fetch_upstream()/
+# fetch_upstream_optional(); for tests, swap both functions' bodies for a `cp`
+# from a local fixture "upstream" repo-root dir instead.
+UPDATE_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <repo-relative-path> <dest>'
+UPDATE_FETCH_OPTIONAL_FUNC_START='fetch_upstream_optional() { # fetch_upstream_optional <repo-relative-path> <dest> -> 0 fetched, 1 not found'
 
 make_local_update_surgical() { # make_local_update_surgical <path-to-update.sh> <upstream-dir> -> patches it in place, prints its path
   local src="$1" upstream_dir="$2"
   grep -qF "$UPDATE_FETCH_FUNC_START" "$src" \
     || { echo "test.sh: update.sh's fetch_upstream() signature has changed — update UPDATE_FETCH_FUNC_START in test.sh" >&2; exit 1; }
+  grep -qF "$UPDATE_FETCH_OPTIONAL_FUNC_START" "$src" \
+    || { echo "test.sh: update.sh's fetch_upstream_optional() signature has changed — update UPDATE_FETCH_OPTIONAL_FUNC_START in test.sh" >&2; exit 1; }
   awk -v up="$upstream_dir" '
-    /^fetch_upstream\(\) \{/ { print "fetch_upstream() { cp \"" up "/.devcontainer/$1\" \"$2\"; }"; skip=1; next }
+    /^fetch_upstream\(\) \{/ {
+      print "fetch_upstream() { cp \"" up "/$1\" \"$2\"; }"
+      skip=1; next
+    }
+    /^fetch_upstream_optional\(\) \{/ {
+      print "fetch_upstream_optional() { if cp \"" up "/$1\" \"$2\" 2>/dev/null; then return 0; else rm -f \"$2\"; return 1; fi; }"
+      skip=1; next
+    }
     skip && /^}/ { skip=0; next }
     skip { next }
     { print }
@@ -443,13 +455,19 @@ test_update_script_surgical_bumps_and_preserves_edits() {
   sed -i '1i # hand-added local comment' "$d/.devcontainer/Dockerfile"
   echo "# hand-added local line" >> "$d/.devcontainer/Dockerfile"
 
-  # Fixture "upstream": same files, with CLAUDE_VER and the pinned extension bumped.
+  # Fixture "upstream" (full repo-root shape: .devcontainer/ + templates/<lang>/):
+  # same files, with CLAUDE_VER, the base pinned extension, and the enabled
+  # language's (go) template extension pin all bumped. install.sh merges
+  # templates/<lang>/extensions.json into the generated devcontainer.json, so
+  # the surgical fetch must pull that too, not just the base devcontainer.json.
   local up; up="$(new_dir)"
-  mkdir -p "$up/.devcontainer"
+  mkdir -p "$up/.devcontainer" "$up/templates/go"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
+  cp "$REPO_ROOT/templates/go/extensions.json" "$up/templates/go/extensions.json"
   sed -i -E 's/ARG CLAUDE_VER=[0-9.]+/ARG CLAUDE_VER=9.9.999/' "$up/.devcontainer/Dockerfile"
   sed -i -E 's/ms-azuretools\.vscode-containers@[0-9.]+/ms-azuretools.vscode-containers@9.9.9/' "$up/.devcontainer/devcontainer.json"
+  sed -i -E 's/golang\.go@[0-9.]+/golang.go@9.9.9/' "$up/templates/go/extensions.json"
 
   local patched_update
   patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
@@ -463,6 +481,7 @@ test_update_script_surgical_bumps_and_preserves_edits() {
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDE_VER=9.9.999'
   assert_contains "$d/.devcontainer/devcontainer.json" 'ms-azuretools.vscode-containers@9.9.9'
+  assert_contains "$d/.devcontainer/devcontainer.json" 'golang.go@9.9.9'
   assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local comment'
   assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local line'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'

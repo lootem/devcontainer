@@ -102,11 +102,23 @@ DEVCONTAINER_JSON="$REPO_ROOT/.devcontainer/devcontainer.json"
 # Surgical mode (default)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Fetch a single upstream .devcontainer file, parse-only (never executed).
-# Kept as its own function/line-pair so tests can swap it for a local `cp`.
-fetch_upstream() { # fetch_upstream <relative-path-under-.devcontainer> <dest>
-  curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/.devcontainer/$1" -o "$2" \
-    || die "Failed to fetch upstream $1 from https://raw.githubusercontent.com/$REPO/$REF/.devcontainer/$1"
+# Fetch a single upstream file (path relative to the repo root), parse-only
+# (never executed). Kept as its own function/line-pair so tests can swap it
+# for a local `cp`.
+fetch_upstream() { # fetch_upstream <repo-relative-path> <dest>
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/$1" -o "$2" \
+    || die "Failed to fetch upstream $1 from https://raw.githubusercontent.com/$REPO/$REF/$1"
+}
+
+# Same, but a missing upstream file (e.g. a language with no extensions.json)
+# is a non-fatal "not found" rather than a die() — never fail per the surgical
+# transplant's "skip, don't error" contract.
+fetch_upstream_optional() { # fetch_upstream_optional <repo-relative-path> <dest> -> 0 fetched, 1 not found
+  if curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/$1" -o "$2" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$2"
+  return 1
 }
 
 # ARG names annotated by a `# renovate:` comment on the line directly above —
@@ -192,20 +204,37 @@ transplant_base_digest() { # transplant_base_digest <local> <upstream>
   BUMPED+=("base image digest: $ldigest -> $udigest")
 }
 
+# All upstream "publisher.name@version" extension pins this repo could ever
+# carry: the base devcontainer.json's pins, plus each *currently enabled*
+# language's templates/<lang>/extensions.json — install.sh merges the latter
+# into the generated devcontainer.json too, so the base file alone isn't the
+# full picture (a language-specific pin would otherwise always look
+# local-only, since upstream's base devcontainer.json never carries it).
+collect_upstream_extension_pins() { # collect_upstream_extension_pins <upstream-devcontainer.json> <enabled-lang-tokens, newline-list>
+  local upstream_json="$1" langs="$2" lang tmp_ext
+  [ -f "$upstream_json" ] && jq -r '(.customizations.vscode.extensions // [])[] | select(test("@"))' "$upstream_json" 2>/dev/null
+  while IFS= read -r lang; do
+    [ -z "$lang" ] && continue
+    tmp_ext="$(mktemp)"
+    if fetch_upstream_optional "templates/$lang/extensions.json" "$tmp_ext"; then
+      jq -r '.[] | select(test("@"))' "$tmp_ext" 2>/dev/null
+    fi
+    rm -f "$tmp_ext"
+  done <<< "$langs"
+}
+
 # devcontainer.json extension pins ("publisher.name@x.y.z"), matched by
 # extension id (the part before the last "@").
-transplant_devcontainer_json_pins() { # transplant_devcontainer_json_pins <local> <upstream>
-  local local_json="$1" upstream_json="$2"
+transplant_devcontainer_json_pins() { # transplant_devcontainer_json_pins <local> <upstream-extension-pins, newline-list>
+  local local_json="$1" upstream_exts="$2"
   if ! command -v jq >/dev/null 2>&1; then
     info "jq not found — skipping devcontainer.json extension pin transplant"
     return
   fi
   [ -f "$local_json" ] || return
-  [ -f "$upstream_json" ] || return
 
-  local local_exts upstream_exts ext id uext uver lver
+  local local_exts ext id uext uver lver
   local_exts="$(jq -r '(.customizations.vscode.extensions // [])[] | select(test("@"))' "$local_json" 2>/dev/null || true)"
-  upstream_exts="$(jq -r '(.customizations.vscode.extensions // [])[] | select(test("@"))' "$upstream_json" 2>/dev/null || true)"
 
   while IFS= read -r ext; do
     [ -z "$ext" ] && continue
@@ -231,6 +260,20 @@ transplant_devcontainer_json_pins() { # transplant_devcontainer_json_pins <local
   done <<< "$upstream_exts"
 }
 
+# --language tokens (python/go/js/dotnet) currently enabled in the local
+# Dockerfile — the only ones with a templates/<lang>/extensions.json; --tool
+# ARGs have no extensions of their own. Uses arg_token() (defined below).
+detect_enabled_langs() { # detect_enabled_langs <dockerfile> -> tokens, one per line
+  local arg_name token
+  while IFS= read -r arg_name; do
+    [ -z "$arg_name" ] && continue
+    token="$(arg_token "$arg_name")" || continue
+    case "$arg_name" in
+      PYTHON|GOLANG|NODEJS|DOTNET) echo "$token" ;;
+    esac
+  done < <(sed -n -E 's/^ARG ([A-Z_]+)=true[[:space:]]*$/\1/p' "$1")
+}
+
 run_surgical() {
   info "Surgical mode: transplanting pinned versions from $REPO@$REF (parse-only, never executed)"
 
@@ -239,8 +282,12 @@ run_surgical() {
   up_devcontainer="$(mktemp)"
   trap 'rm -f "$up_dockerfile" "$up_devcontainer"' RETURN
 
-  fetch_upstream "Dockerfile" "$up_dockerfile"
-  fetch_upstream "devcontainer.json" "$up_devcontainer"
+  fetch_upstream ".devcontainer/Dockerfile" "$up_dockerfile"
+  fetch_upstream ".devcontainer/devcontainer.json" "$up_devcontainer"
+
+  local enabled_langs upstream_ext_pins
+  enabled_langs="$(detect_enabled_langs "$DOCKERFILE")"
+  upstream_ext_pins="$(collect_upstream_extension_pins "$up_devcontainer" "$enabled_langs")"
 
   BUMPED=()
   SKIPPED_UPSTREAM_ONLY=()
@@ -248,7 +295,7 @@ run_surgical() {
 
   transplant_dockerfile_pins "$DOCKERFILE" "$up_dockerfile"
   transplant_base_digest "$DOCKERFILE" "$up_dockerfile"
-  transplant_devcontainer_json_pins "$DEVCONTAINER_JSON" "$up_devcontainer"
+  transplant_devcontainer_json_pins "$DEVCONTAINER_JSON" "$upstream_ext_pins"
 
   echo
   info "bumped ${#BUMPED[@]} pin(s), skipped ${#SKIPPED_UPSTREAM_ONLY[@]} upstream-only, ${#SKIPPED_LOCAL_ONLY[@]} local-only"
