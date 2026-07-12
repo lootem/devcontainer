@@ -2,10 +2,7 @@ name: Base Image Digest Bump
 
 on:
   schedule:
-    # Offset from renovate.yml's Monday 05:00 run so the two don't race to
-    # merge into main at the same time (a base-image merge mid-Renovate-run
-    # trips Renovate's "repository has changed" abort).
-    - cron: '0 9 * * 1'
+    - cron: '0 9 * * *' # every day at 9:00 UTC
   workflow_dispatch:
 
 permissions:
