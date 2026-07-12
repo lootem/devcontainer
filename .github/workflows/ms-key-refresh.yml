@@ -2,12 +2,12 @@ name: Microsoft apt Key Rotation Monitor
 
 on:
   schedule:
-    # Monthly. This is a rotation alarm, not a routine bumper: the .NET,
-    # Azure CLI, and PowerShell Dockerfile blocks fetch keys/microsoft.asc
-    # fresh at build time and only pin its fingerprint, so a routine re-sign
-    # needs no action here. This job exists solely to catch a genuine
-    # fingerprint rotation early. Offset from the Renovate (5:00), base-image
-    # (9:00), and AWS CLI key-refresh (1st, 11:00) runs so nothing races.
+    # Monthly. This is a rotation alarm, not a routine bumper: the Dockerfile
+    # blocks fetch each key fresh at build time and only pin its fingerprint,
+    # so a routine re-sign needs no action here. This job exists solely to
+    # catch a genuine fingerprint rotation early. Offset from the Renovate
+    # (5:00), base-image (9:00), and AWS CLI key-refresh (1st, 11:00) runs so
+    # nothing races.
     - cron: '0 13 1 * *'
   workflow_dispatch:
 
@@ -16,35 +16,49 @@ permissions:
   pull-requests: write
 
 env:
-  KEY_URL: https://packages.microsoft.com/keys/microsoft.asc
   DOCKERFILE: .devcontainer/Dockerfile
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Microsoft signs repos with one of two keys depending on when the
+        # repo was created (see
+        # https://learn.microsoft.com/en-us/linux/packages#how-to-use-the-gpg-repository-signing-key).
+        # Both are pinned in the Dockerfile and must be monitored independently.
+        key:
+          - arg: MS_KEY_FP
+            url: https://packages.microsoft.com/keys/microsoft.asc
+          - arg: MS_KEY_FP_2025
+            url: https://packages.microsoft.com/keys/microsoft-2025.asc
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Compare live fingerprint against the pinned EXPECTED
+      - name: Compare live fingerprint against the pinned ARG
         id: check
+        env:
+          KEY_ARG: ${{ matrix.key.arg }}
+          KEY_URL: ${{ matrix.key.url }}
         run: |
           set -euo pipefail
 
-          OLD="$(grep -oP '(?<=^ARG MS_KEY_FP=)\S+' "$DOCKERFILE")"
+          OLD="$(grep -oP "(?<=^ARG ${KEY_ARG}=)\S+" "$DOCKERFILE")"
 
-          curl -fsSL "$KEY_URL" -o microsoft.asc
+          curl -fsSL "$KEY_URL" -o key.asc
           GNUPGHOME="$(mktemp -d)"
           export GNUPGHOME
-          gpg --batch --import microsoft.asc
-          NEW="$(gpg --show-keys --fingerprint microsoft.asc 2>/dev/null | grep -A1 "pub" | tail -1 | tr -d ' ')"
-          rm -f microsoft.asc
+          gpg --batch --import key.asc
+          NEW="$(gpg --show-keys --fingerprint key.asc 2>/dev/null | grep -A1 "pub" | tail -1 | tr -d ' ')"
+          rm -f key.asc
 
           echo "old=$OLD" >> "$GITHUB_OUTPUT"
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
 
           if [ "$NEW" != "$OLD" ]; then
-            echo "::warning::Microsoft apt signing key fingerprint changed: $OLD -> $NEW"
-            sed -i "s/^ARG MS_KEY_FP=.*/ARG MS_KEY_FP=$NEW/" "$DOCKERFILE"
+            echo "::warning::Microsoft apt signing key $KEY_ARG fingerprint changed: $OLD -> $NEW"
+            sed -i "s/^ARG ${KEY_ARG}=.*/ARG ${KEY_ARG}=$NEW/" "$DOCKERFILE"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -58,20 +72,20 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.RENOVATE_TOKEN }}
-          commit-message: 'security: bump pinned Microsoft apt signing key fingerprint'
-          title: 'SECURITY: Microsoft apt signing key rotation — requires manual review'
+          commit-message: 'security: bump pinned Microsoft apt signing key fingerprint (${{ matrix.key.arg }})'
+          title: 'SECURITY: Microsoft apt signing key rotation (${{ matrix.key.arg }}) — requires manual review'
           body: |
-            `keys/microsoft.asc`'s fingerprint no longer matches the pinned
-            `MS_KEY_FP` in `.devcontainer/Dockerfile`.
+            `${{ matrix.key.url }}`'s fingerprint no longer matches the pinned
+            `${{ matrix.key.arg }}` in `.devcontainer/Dockerfile`.
 
             - Old fingerprint: `${{ steps.check.outputs.old }}`
             - New fingerprint: `${{ steps.check.outputs.new }}`
-            - Source: ${{ env.KEY_URL }}
+            - Source: ${{ matrix.key.url }}
 
             This is either a genuine Microsoft key rotation or a compromised/
             MITM'd feed. **Do not merge without independently verifying the new
             fingerprint against a source you trust** (e.g. Microsoft's own
             documentation, a second network path, or direct contact with
             Microsoft). Do not enable auto-merge on this PR.
-          branch: refresh-ms-apt-key-fingerprint
+          branch: refresh-ms-apt-key-fingerprint-${{ matrix.key.arg }}
           delete-branch: true

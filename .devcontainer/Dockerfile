@@ -112,11 +112,17 @@ RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked
 USER root
 # End Node.js
 
-# -- Microsoft apt signing key (shared by .NET, Azure CLI, PowerShell below)
-# Fingerprint is stable across Microsoft's periodic re-signs of the same key;
+# -- Microsoft apt signing keys (shared by .NET, Azure CLI, PowerShell below)
+# Microsoft signs repos with one of two keys depending on when the repo was
+# created (see https://learn.microsoft.com/en-us/linux/packages#how-to-use-the-gpg-repository-signing-key):
+# repos.microsoft.com/repos/azure-cli (bookworm) predates the cutover and is
+# still signed by the legacy microsoft.asc key; debian/13/prod (trixie) was
+# created after and is signed by the newer microsoft-2025.asc key. Each
+# fingerprint is stable across Microsoft's periodic re-signs of its own key;
 # only a genuine key rotation changes it (monitored by
 # .github/workflows/ms-key-refresh.yml, which opens a PR for human review).
 ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF
+ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B
 
 # -- .NET
 ARG DOTNET=false
@@ -125,10 +131,10 @@ ARG DOTNET_VER=10.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$DOTNET" = "true" ]; then \
-    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc -o /tmp/microsoft.asc && \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc -o /tmp/microsoft.asc && \
     ACTUAL=$(gpg --show-keys --fingerprint /tmp/microsoft.asc 2>/dev/null \
     | grep -A1 "pub" | tail -1 | tr -d ' ') && \
-    [ "$ACTUAL" = "$MS_KEY_FP" ] && \
+    [ "$ACTUAL" = "$MS_KEY_FP_2025" ] && \
     install -d -m 0755 /etc/apt/keyrings && \
     gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
     chmod go+r /etc/apt/keyrings/microsoft.gpg && rm /tmp/microsoft.asc && \
@@ -175,10 +181,10 @@ ARG AZPWSH_VER=15.1.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$POWERSHELL" = "true" ] || [ "$AZPWSH" = "true" ]; then \
-    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc -o /tmp/microsoft.asc && \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc -o /tmp/microsoft.asc && \
     ACTUAL=$(gpg --show-keys --fingerprint /tmp/microsoft.asc 2>/dev/null \
     | grep -A1 "pub" | tail -1 | tr -d ' ') && \
-    [ "$ACTUAL" = "$MS_KEY_FP" ] && \
+    [ "$ACTUAL" = "$MS_KEY_FP_2025" ] && \
     install -d -m 0755 /etc/apt/keyrings && \
     gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
     chmod go+r /etc/apt/keyrings/microsoft.gpg && rm /tmp/microsoft.asc && \
