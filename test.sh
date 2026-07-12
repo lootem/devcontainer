@@ -883,6 +883,16 @@ test_ms_key_pinning() {
   [ "$n" -eq 2 ] && ok "dotnet-sdk and powershell blocks fetch keys/microsoft-2025.asc fresh" \
     || fail "expected 2 fetches of keys/microsoft-2025.asc, found $n"
 
+  # Regression guard: the legacy and 2025 keys must write to DIFFERENT keyring
+  # files. If both blocks wrote /etc/apt/keyrings/microsoft.gpg, whichever
+  # block ran last would silently overwrite the other's keyring, breaking
+  # apt-get update for any Microsoft source list added by the other block
+  # (this exact bug shipped once: azure-cli clobbering the .NET/PowerShell
+  # 2025 keyring caused "Missing key EE4D7792F748182B" on a combined build).
+  n="$(grep -c 'etc/apt/keyrings/microsoft-2025.gpg' "$dockerfile" || true)"
+  [ "$n" -ge 2 ] && ok "dotnet-sdk and powershell write/reference a keyring file distinct from azure-cli's" \
+    || fail "expected dotnet-sdk/powershell to use a microsoft-2025.gpg keyring separate from azure-cli's microsoft.gpg, found $n references"
+
   if grep -q 'packages-microsoft-prod.deb' "$dockerfile"; then
     fail "Dockerfile still references the opaque packages-microsoft-prod.deb config package"
   else

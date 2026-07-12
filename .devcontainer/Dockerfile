@@ -136,9 +136,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     | grep -A1 "pub" | tail -1 | tr -d ' ') && \
     [ "$ACTUAL" = "$MS_KEY_FP_2025" ] && \
     install -d -m 0755 /etc/apt/keyrings && \
-    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
-    chmod go+r /etc/apt/keyrings/microsoft.gpg && rm /tmp/microsoft.asc && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] \
+    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft-2025.gpg > /dev/null && \
+    chmod go+r /etc/apt/keyrings/microsoft-2025.gpg && rm /tmp/microsoft.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft-2025.gpg] \
     https://packages.microsoft.com/debian/13/prod trixie main" \
     | tee /etc/apt/sources.list.d/microsoft-prod.list && \
     apt-get update && \
@@ -186,9 +186,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     | grep -A1 "pub" | tail -1 | tr -d ' ') && \
     [ "$ACTUAL" = "$MS_KEY_FP_2025" ] && \
     install -d -m 0755 /etc/apt/keyrings && \
-    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
-    chmod go+r /etc/apt/keyrings/microsoft.gpg && rm /tmp/microsoft.asc && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] \
+    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft-2025.gpg > /dev/null && \
+    chmod go+r /etc/apt/keyrings/microsoft-2025.gpg && rm /tmp/microsoft.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft-2025.gpg] \
     https://packages.microsoft.com/debian/13/prod trixie main" \
     | tee /etc/apt/sources.list.d/microsoft-prod.list && \
     apt-get update && \
