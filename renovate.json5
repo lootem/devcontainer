@@ -39,6 +39,20 @@
       ],
     },
     {
+      // skills/vendor-matt-pocock-skills.sh pins a third-party commit SHA
+      // (not a tag/branch) as its default --ref. Tracked as a git-refs digest
+      // against upstream's default branch so Renovate can propose bumps —
+      // still gated by minimumReleaseAge above, and still a maintainer
+      // decision to actually apply (see the script's header comment: the
+      // upstream repo has renamed/merged skills before).
+      customType: 'regex',
+      managerFilePatterns: ['/^skills/vendor-matt-pocock-skills\\.sh$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>git-refs) depName=(?<depName>\\S+)\\nREF="(?<currentDigest>[0-9a-f]{40})"',
+      ],
+      currentValueTemplate: 'main',
+    },
+    {
       // VS Code extension pins ("publisher.name@x.y.z") in the template
       // extensions.json files AND the base devcontainer.json. Only extensions
       // available on OpenVSX get pinned this way; ones that aren't published

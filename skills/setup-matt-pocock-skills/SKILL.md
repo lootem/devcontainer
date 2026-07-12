@@ -4,6 +4,7 @@ description: Configure this repo for the engineering skills — set up its issue
 disable-model-invocation: true
 metadata:
   author: mattpocock
+  category: engineering
 ---
 
 # Setup Matt Pocock's Skills

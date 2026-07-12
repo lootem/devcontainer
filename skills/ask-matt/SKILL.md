@@ -4,6 +4,7 @@ description: Ask which skill or flow fits your situation. A router over the skil
 disable-model-invocation: true
 metadata:
   author: mattpocock
+  category: engineering
 ---
 
 # Ask Matt

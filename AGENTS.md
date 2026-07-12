@@ -28,7 +28,7 @@ state, not a template to copy (that's `skills/`).
 | `claude.sh` | Launcher copied into every generated project. Picks a Claude backend (`api`/`bedrock`/`foundry`) and `exec claude`. Points `CLAUDE_CONFIG_DIR` at `./.claude` so state survives container rebuilds. |
 | `.devcontainer/` | The baseline container. `Dockerfile` (feature-flagged via `ARG`s), `docker-compose.yml`, `devcontainer.json`, `awscli.pub`. |
 | `templates/` | Per-language fragments merged into the baseline. `templates/basesettings.json` and `templates/basegitignore` are the always-included base; `templates/<lang>/` holds that language's extras. |
-| `skills/` | Curated Claude Code skills, optionally copied into a project's `.claude/skills/` with `--skills`. |
+| `skills/` | Curated Claude Code skills, optionally copied into a project's `.claude/skills/` with `--skills`. Skills tagged `metadata: author: mattpocock` are re-vendored from upstream by `skills/vendor-matt-pocock-skills.sh` (maintainer-only, manual — see its `--help`); excluded from the `--skills` copy. |
 | `README.md` | User-facing docs. |
 
 `.claude/` is local state (settings, history, skills) — untracked scaffolding

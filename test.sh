@@ -66,6 +66,66 @@ PATCH_DIR="$(mktemp -d)"
 SCRATCH_DIRS+=("$PATCH_DIR")
 INSTALL="$(make_local_install)"
 
+# vendor-matt-pocock-skills.sh always clones from https://github.com/$REPO; for
+# tests, patch that URL to a local fixture repo path so nothing touches the
+# network. The fixture's SHAs are baked in by build_vendor_fixture (below).
+VENDOR_CLONE_URL='https://github.com/$REPO'
+
+make_local_vendor_script() { # make_local_vendor_script <fixture-path> -> prints path to a patched copy
+  local fixture="$1" patched="$PATCH_DIR/vendor-matt-pocock-skills-$RANDOM.sh"
+  grep -qF "$VENDOR_CLONE_URL" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+    || { echo "test.sh: vendor script's git clone URL has changed — update VENDOR_CLONE_URL in test.sh" >&2; exit 1; }
+  sed "s|$VENDOR_CLONE_URL|$fixture|" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" > "$patched"
+  chmod +x "$patched"
+  printf '%s' "$patched"
+}
+
+# Builds a local git fixture standing in for mattpocock/skills, with three
+# commits: a clean state, one that introduces a name collision, and one with a
+# SKILL.md missing frontmatter fences. Echoes "clean_sha collide_sha badfm_sha".
+# Takes the (already new_dir-tracked) directory to build it in — run inside a
+# command substitution, so it can't append to SCRATCH_DIRS itself.
+build_vendor_fixture() { # build_vendor_fixture <dir>
+  local fixture="$1"
+  git init -q "$fixture"
+  (
+    cd "$fixture"
+    git config user.email test@example.com
+    git config user.name test
+
+    mkdir -p skills/engineering/demo-a skills/productivity/demo-b
+    cat > skills/engineering/demo-a/SKILL.md <<'EOF'
+---
+name: demo-a
+description: demo engineering skill
+---
+Body mentions author: mattpocock in prose only — must NOT trigger removal on the local side.
+EOF
+    cat > skills/productivity/demo-b/SKILL.md <<'EOF'
+---
+name: demo-b
+description: demo productivity skill
+metadata:
+  license: MIT
+---
+Some body text.
+EOF
+    git add -A && git commit -q -m clean
+    git rev-parse HEAD
+
+    mkdir -p skills/productivity/demo-a
+    cp skills/engineering/demo-a/SKILL.md skills/productivity/demo-a/SKILL.md
+    git add -A && git commit -q -m collide
+    git rev-parse HEAD
+
+    git rm -rq skills/productivity/demo-a >/dev/null
+    mkdir -p skills/engineering/demo-bad
+    printf 'no frontmatter fences here\n' > skills/engineering/demo-bad/SKILL.md
+    git add -A && git commit -q -m badfm
+    git rev-parse HEAD
+  )
+}
+
 # update.sh --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
 # for tests, swap that one line for a direct call to the patched local install.sh.
 UPDATE_CURL_LINE='curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"'
@@ -233,6 +293,117 @@ test_tool_unknown_rejected() {
     fail "install.sh should reject an unknown --tool"
   else
     ok "install.sh rejects an unknown --tool"
+  fi
+}
+
+test_vendor_script_excluded_from_skills_copy() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --skills --force
+  assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
+  assert_file_not_exists "$d/.claude/skills/vendor-matt-pocock-skills.sh"
+}
+
+test_vendor_script_mattpocock_skills_have_category() {
+  local f name missing=0
+  for f in "$REPO_ROOT"/skills/*/SKILL.md; do
+    name="$(basename "$(dirname "$f")")"
+    awk '/^---[[:space:]]*$/{n++; next} n==1' "$f" > /tmp/test.sh.frontmatter.$$
+    if grep -qE '^[[:space:]]+author:[[:space:]]*mattpocock[[:space:]]*$' /tmp/test.sh.frontmatter.$$; then
+      if grep -qE '^[[:space:]]+category:[[:space:]]*(engineering|productivity)[[:space:]]*$' /tmp/test.sh.frontmatter.$$; then
+        ok "skills/$name: mattpocock skill carries category"
+      else
+        fail "skills/$name: mattpocock skill missing category"
+        missing=$((missing+1))
+      fi
+    fi
+    rm -f /tmp/test.sh.frontmatter.$$
+  done
+  [ "$missing" -eq 0 ] && ok "all mattpocock-tagged skills carry a category"
+}
+
+test_vendor_script_syntax() {
+  bash -n "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" && ok "vendor-matt-pocock-skills.sh parses" \
+    || fail "vendor-matt-pocock-skills.sh syntax error"
+}
+
+test_vendor_script_help() {
+  local out
+  out="$(bash "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" --help)"
+  printf '%s' "$out" | grep -qF -- "--ref" && ok "--help mentions --ref" || fail "--help missing --ref"
+  printf '%s' "$out" | grep -qF -- "--repo" && ok "--help mentions --repo" || fail "--help missing --repo"
+  printf '%s' "$out" | grep -qF ".claude/skills/" && ok "--help notes .claude/skills/ drift" \
+    || fail "--help doesn't mention .claude/skills/ drift"
+}
+
+test_vendor_script_end_to_end() {
+  local fixture; fixture="$(new_dir)"
+  local shas clean_sha collide_sha badfm_sha
+  shas="$(build_vendor_fixture "$fixture")"
+  clean_sha="$(sed -n '1p' <<<"$shas")"
+  collide_sha="$(sed -n '2p' <<<"$shas")"
+  badfm_sha="$(sed -n '3p' <<<"$shas")"
+
+  local target; target="$(new_dir)"
+  mkdir -p "$target/skills/preexisting-mattpocock" "$target/skills/preexisting-other"
+  cat > "$target/skills/preexisting-mattpocock/SKILL.md" <<'EOF'
+---
+name: preexisting-mattpocock
+description: should be removed, tagged mattpocock
+metadata:
+  author: mattpocock
+---
+Body.
+EOF
+  cat > "$target/skills/preexisting-other/SKILL.md" <<'EOF'
+---
+name: preexisting-other
+description: not tagged, must survive untouched
+---
+Body mentions author: mattpocock in prose only.
+EOF
+
+  local script; script="$(make_local_vendor_script "$fixture")"
+
+  # The script derives its repo root from its own path (dirname/..), so drop
+  # the patched copy into $target/skills/ to scope it at $target.
+  cp "$script" "$target/skills/vendor.sh"
+
+  # Clean ref: removes the tagged skill, leaves the untagged one, adds the two
+  # new ones stamped with author + category.
+  ( cd "$target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) \
+    >"$target/.out" 2>&1 || { echo "vendor script failed:"; cat "$target/.out"; fail "clean ref run failed"; return; }
+
+  assert_file_not_exists "$target/skills/preexisting-mattpocock/SKILL.md"
+  assert_file_exists "$target/skills/preexisting-other/SKILL.md"
+  assert_file_exists "$target/skills/demo-a/SKILL.md"
+  assert_file_exists "$target/skills/demo-b/SKILL.md"
+  assert_contains "$target/skills/demo-a/SKILL.md" "author: mattpocock"
+  assert_contains "$target/skills/demo-a/SKILL.md" "category: engineering"
+  assert_contains "$target/skills/demo-b/SKILL.md" "category: productivity"
+  # demo-b already had a metadata: block (license: MIT) — must be preserved, not clobbered.
+  assert_contains "$target/skills/demo-b/SKILL.md" "license: MIT"
+
+  # Idempotent re-run: byte-identical.
+  local before after
+  before="$(md5sum "$target/skills/demo-a/SKILL.md" | cut -d' ' -f1)"
+  ( cd "$target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) >/dev/null 2>&1
+  after="$(md5sum "$target/skills/demo-a/SKILL.md" | cut -d' ' -f1)"
+  assert_eq "$after" "$before" "re-running at the same ref is idempotent"
+
+  # Collision ref: must die loudly, not silently pick a side.
+  if ( cd "$target" && bash skills/vendor.sh --ref "$collide_sha" --repo unused ) >"$target/.collide.log" 2>&1; then
+    fail "vendor script should have failed on a name collision"
+  else
+    grep -qi "collision" "$target/.collide.log" && ok "vendor script dies loudly on a name collision" \
+      || fail "vendor script failed but without mentioning the collision"
+  fi
+
+  # Bad-frontmatter ref: must die loudly, not stamp garbage.
+  if ( cd "$target" && bash skills/vendor.sh --ref "$badfm_sha" --repo unused ) >"$target/.badfm.log" 2>&1; then
+    fail "vendor script should have failed on a SKILL.md with no frontmatter fences"
+  else
+    grep -qi "frontmatter" "$target/.badfm.log" && ok "vendor script dies loudly on missing frontmatter" \
+      || fail "vendor script failed but without mentioning frontmatter"
   fi
 }
 
@@ -496,6 +667,26 @@ test_renovate_regex_covers_pins() {
   fi
 }
 
+test_renovate_regex_covers_vendor_script_pin() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  local vendor_script="$REPO_ROOT/skills/vendor-matt-pocock-skills.sh"
+
+  grep -qF "git-refs" "$renovate" && ok "renovate.json5 has a git-refs customManager" \
+    || fail "renovate.json5 is missing a git-refs customManager for the vendor script pin"
+  grep -qF "vendor-matt-pocock-skills" "$renovate" && ok "renovate.json5 customManager targets the vendor script" \
+    || fail "renovate.json5 customManager doesn't target skills/vendor-matt-pocock-skills.sh"
+
+  grep -qE '^# renovate: datasource=git-refs depName=\S+$' "$vendor_script" \
+    && ok "vendor script has a # renovate: git-refs annotation" \
+    || fail "vendor script is missing its # renovate: git-refs annotation"
+  grep -qP '^REF="[0-9a-f]{40}"$' "$vendor_script" \
+    && ok "vendor script's default REF is a full 40-char commit SHA" \
+    || fail "vendor script's default REF isn't a full 40-char commit SHA"
+  grep -qzP '# renovate: datasource=git-refs depName=\S+\nREF="[0-9a-f]{40}"' "$vendor_script" \
+    && ok "the renovate annotation sits directly above REF= (matches renovate.json5's matchStrings)" \
+    || fail "the renovate annotation isn't directly above REF= — renovate.json5's matchStrings won't match"
+}
+
 test_renovate_regex_covers_extension_pins() {
   local renovate="$REPO_ROOT/renovate.json5"
   # Pull the extension customManager's matchStrings regex out of the JSON5
@@ -643,7 +834,7 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -662,7 +853,7 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/test.sh" \
+  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
@@ -704,6 +895,11 @@ TESTS=(
   test_dotnet_scaffold
   test_tool_scaffold
   test_tool_unknown_rejected
+  test_vendor_script_excluded_from_skills_copy
+  test_vendor_script_mattpocock_skills_have_category
+  test_vendor_script_syntax
+  test_vendor_script_help
+  test_vendor_script_end_to_end
   test_verbatim_extras
   test_extensions_default_off
   test_extensions_opt_in
@@ -727,6 +923,7 @@ TESTS=(
   test_update_script_help_mentions_full_and_repo
   test_shellcheck
   test_renovate_regex_covers_pins
+  test_renovate_regex_covers_vendor_script_pin
   test_renovate_regex_covers_extension_pins
   test_token_set_matches_dockerfile_args
 )

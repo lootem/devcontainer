@@ -456,6 +456,9 @@ if [ "$WANT_SKILLS" = true ]; then
     if may_write "$TARGET/.claude/skills"; then
       mkdir -p "$TARGET/.claude/skills"
       cp -R "$SRC/skills/." "$TARGET/.claude/skills/"
+      # Maintainer-only tool for re-vendoring skills/ itself — irrelevant
+      # (and not meant to run) inside a generated project's .claude/skills/.
+      rm -f "$TARGET/.claude/skills/vendor-matt-pocock-skills.sh"
       info "Wrote $TARGET/.claude/skills/"
     fi
   else

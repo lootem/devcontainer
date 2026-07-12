@@ -4,6 +4,7 @@ description: Move issues and external PRs through a state machine of triage role
 disable-model-invocation: true
 metadata:
   author: mattpocock
+  category: engineering
 ---
 
 # Triage
