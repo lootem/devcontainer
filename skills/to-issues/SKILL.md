@@ -4,6 +4,7 @@ description: Break a plan, spec, or PRD into independently-grabbable issues on t
 disable-model-invocation: true
 metadata:
   author: mattpocock
+  category: engineering
 ---
 
 # To Issues

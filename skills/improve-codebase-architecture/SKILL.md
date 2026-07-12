@@ -4,6 +4,7 @@ description: Scan a codebase for deepening opportunities, present them as a visu
 disable-model-invocation: true
 metadata:
   author: mattpocock
+  category: engineering
 ---
 
 # Improve Codebase Architecture

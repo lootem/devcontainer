@@ -4,7 +4,6 @@ FROM mcr.microsoft.com/devcontainers/base:trixie@sha256:1a00517e89d3075f8c9dc8d9
 ###############################################################
 
 # -- Persistent environment variables
-# Set unconditionally — a missing directory on PATH is harmless.
 ENV PATH="/usr/local/go/bin:${PATH}" \
     GOROOT="/usr/local/go" \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
@@ -54,7 +53,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_URL=https://go.dev/dl/go1.26.4.linux-amd64.tar.gz
+ARG GO_VER=1.26.4
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 
@@ -63,7 +62,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends build-essential make mingw-w64 && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "${GO_URL}" | tar -xz -C /usr/local;\
+    curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local;\
     fi
 USER vscode
 RUN if [ "$GOLANG" = "true" ]; then \
@@ -113,6 +112,18 @@ RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked
 USER root
 # End Node.js
 
+# -- Microsoft apt signing keys (shared by .NET, Azure CLI, PowerShell below)
+# Microsoft signs repos with one of two keys depending on when the repo was
+# created (see https://learn.microsoft.com/en-us/linux/packages#how-to-use-the-gpg-repository-signing-key):
+# repos.microsoft.com/repos/azure-cli (bookworm) predates the cutover and is
+# still signed by the legacy microsoft.asc key; debian/13/prod (trixie) was
+# created after and is signed by the newer microsoft-2025.asc key. Each
+# fingerprint is stable across Microsoft's periodic re-signs of its own key;
+# only a genuine key rotation changes it (monitored by
+# .github/workflows/ms-key-refresh.yml, which opens a PR for human review).
+ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF
+ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B
+
 # -- .NET
 ARG DOTNET=false
 # renovate: datasource=dotnet-version depName=dotnet-sdk
@@ -120,9 +131,16 @@ ARG DOTNET_VER=10.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$DOTNET" = "true" ]; then \
-    wget https://packages.microsoft.com/config/debian/13/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
-    sudo dpkg -i packages-microsoft-prod.deb && \
-    rm packages-microsoft-prod.deb && \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc -o /tmp/microsoft.asc && \
+    ACTUAL=$(gpg --show-keys --fingerprint /tmp/microsoft.asc 2>/dev/null \
+    | grep -A1 "pub" | tail -1 | tr -d ' ') && \
+    [ "$ACTUAL" = "$MS_KEY_FP_2025" ] && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft-2025.gpg > /dev/null && \
+    chmod go+r /etc/apt/keyrings/microsoft-2025.gpg && rm /tmp/microsoft.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft-2025.gpg] \
+    https://packages.microsoft.com/debian/13/prod trixie main" \
+    | tee /etc/apt/sources.list.d/microsoft-prod.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends dotnet-sdk-$DOTNET_VER && \
     rm -rf /var/lib/apt/lists/*; \
@@ -136,10 +154,13 @@ ARG AZ_VER=2.87.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$AZCLI" = "true" ]; then \
-    mkdir -p /etc/apt/keyrings && \
-    curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
-    | gpg --dearmor | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
-    chmod go+r /etc/apt/keyrings/microsoft.gpg && \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc -o /tmp/microsoft.asc && \
+    ACTUAL=$(gpg --show-keys --fingerprint /tmp/microsoft.asc 2>/dev/null \
+    | grep -A1 "pub" | tail -1 | tr -d ' ') && \
+    [ "$ACTUAL" = "$MS_KEY_FP" ] && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft.gpg > /dev/null && \
+    chmod go+r /etc/apt/keyrings/microsoft.gpg && rm /tmp/microsoft.asc && \
     AZ_DIST="bookworm" && \
     printf "Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" \
     "${AZ_DIST}" "$(dpkg --print-architecture)" \
@@ -160,10 +181,18 @@ ARG AZPWSH_VER=15.1.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$POWERSHELL" = "true" ] || [ "$AZPWSH" = "true" ]; then \
-    wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VER}/powershell_${PWSH_VER}-1.deb_amd64.deb" -O /tmp/powershell.deb && \
-    dpkg -i /tmp/powershell.deb; \
-    apt-get install -f -y && \
-    rm /tmp/powershell.deb && \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc -o /tmp/microsoft.asc && \
+    ACTUAL=$(gpg --show-keys --fingerprint /tmp/microsoft.asc 2>/dev/null \
+    | grep -A1 "pub" | tail -1 | tr -d ' ') && \
+    [ "$ACTUAL" = "$MS_KEY_FP_2025" ] && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    gpg --dearmor < /tmp/microsoft.asc | tee /etc/apt/keyrings/microsoft-2025.gpg > /dev/null && \
+    chmod go+r /etc/apt/keyrings/microsoft-2025.gpg && rm /tmp/microsoft.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft-2025.gpg] \
+    https://packages.microsoft.com/debian/13/prod trixie main" \
+    | tee /etc/apt/sources.list.d/microsoft-prod.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends powershell=${PWSH_VER}-1.deb && \
     rm -rf /var/lib/apt/lists/*; \
     fi
 RUN if [ "$AZPWSH" = "true" ]; then \
@@ -178,9 +207,10 @@ ARG AWS_VER=2.35.14
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$AWS_VER.zip" \
+    ARCH="$(uname -m)" && \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}-$AWS_VER.zip" \
     -o /tmp/awscliv2.zip && \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$AWS_VER.zip.sig" \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}-$AWS_VER.zip.sig" \
     -o /tmp/awscliv2.sig && \
     gpg --import /tmp/awscli.pub && \
     ACTUAL=$(gpg --fingerprint A6310ACC4672475C 2>/dev/null \

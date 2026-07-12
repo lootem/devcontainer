@@ -66,8 +66,68 @@ PATCH_DIR="$(mktemp -d)"
 SCRATCH_DIRS+=("$PATCH_DIR")
 INSTALL="$(make_local_install)"
 
-# update.sh normally fetches install.sh from https://ltm.sh/dev/<ref>; for
-# tests, swap that one line for a direct call to the patched local install.sh.
+# vendor-matt-pocock-skills.sh always clones from https://github.com/$REPO; for
+# tests, patch that URL to a local fixture repo path so nothing touches the
+# network. The fixture's SHAs are baked in by build_vendor_fixture (below).
+VENDOR_CLONE_URL='https://github.com/$REPO'
+
+make_local_vendor_script() { # make_local_vendor_script <fixture-path> -> prints path to a patched copy
+  local fixture="$1" patched="$PATCH_DIR/vendor-matt-pocock-skills-$RANDOM.sh"
+  grep -qF "$VENDOR_CLONE_URL" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+    || { echo "test.sh: vendor script's git clone URL has changed — update VENDOR_CLONE_URL in test.sh" >&2; exit 1; }
+  sed "s|$VENDOR_CLONE_URL|$fixture|" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" > "$patched"
+  chmod +x "$patched"
+  printf '%s' "$patched"
+}
+
+# Builds a local git fixture standing in for mattpocock/skills, with three
+# commits: a clean state, one that introduces a name collision, and one with a
+# SKILL.md missing frontmatter fences. Echoes "clean_sha collide_sha badfm_sha".
+# Takes the (already new_dir-tracked) directory to build it in — run inside a
+# command substitution, so it can't append to SCRATCH_DIRS itself.
+build_vendor_fixture() { # build_vendor_fixture <dir>
+  local fixture="$1"
+  git init -q "$fixture"
+  (
+    cd "$fixture"
+    git config user.email test@example.com
+    git config user.name test
+
+    mkdir -p skills/engineering/demo-a skills/productivity/demo-b
+    cat > skills/engineering/demo-a/SKILL.md <<'EOF'
+---
+name: demo-a
+description: demo engineering skill
+---
+Body mentions author: mattpocock in prose only — must NOT trigger removal on the local side.
+EOF
+    cat > skills/productivity/demo-b/SKILL.md <<'EOF'
+---
+name: demo-b
+description: demo productivity skill
+metadata:
+  license: MIT
+---
+Some body text.
+EOF
+    git add -A && git commit -q -m clean
+    git rev-parse HEAD
+
+    mkdir -p skills/productivity/demo-a
+    cp skills/engineering/demo-a/SKILL.md skills/productivity/demo-a/SKILL.md
+    git add -A && git commit -q -m collide
+    git rev-parse HEAD
+
+    git rm -rq skills/productivity/demo-a >/dev/null
+    mkdir -p skills/engineering/demo-bad
+    printf 'no frontmatter fences here\n' > skills/engineering/demo-bad/SKILL.md
+    git add -A && git commit -q -m badfm
+    git rev-parse HEAD
+  )
+}
+
+# update.sh --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
+# for tests, swap that one line for a direct call to the patched local install.sh.
 UPDATE_CURL_LINE='curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"'
 
 make_local_update() { # make_local_update <path-to-update.sh> -> patches it in place, prints its path
@@ -78,6 +138,26 @@ make_local_update() { # make_local_update <path-to-update.sh> -> patches it in p
   # root via its own path (BASH_SOURCE), so it must stay under .devcontainer/.
   awk -v old="$UPDATE_CURL_LINE" -v install="$INSTALL" '
     $0 == old { print "bash \"" install "\" \"${ARGS[@]}\""; next }
+    { print }
+  ' "$src" > "$src.tmp"
+  mv "$src.tmp" "$src"
+  chmod +x "$src"
+  printf '%s' "$src"
+}
+
+# Surgical update.sh (the default mode) fetches upstream's Dockerfile +
+# devcontainer.json via fetch_upstream(); for tests, swap that function's body
+# for a `cp` from a local fixture "upstream" .devcontainer/ dir instead.
+UPDATE_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <relative-path-under-.devcontainer> <dest>'
+
+make_local_update_surgical() { # make_local_update_surgical <path-to-update.sh> <upstream-dir> -> patches it in place, prints its path
+  local src="$1" upstream_dir="$2"
+  grep -qF "$UPDATE_FETCH_FUNC_START" "$src" \
+    || { echo "test.sh: update.sh's fetch_upstream() signature has changed — update UPDATE_FETCH_FUNC_START in test.sh" >&2; exit 1; }
+  awk -v up="$upstream_dir" '
+    /^fetch_upstream\(\) \{/ { print "fetch_upstream() { cp \"" up "/.devcontainer/$1\" \"$2\"; }"; skip=1; next }
+    skip && /^}/ { skip=0; next }
+    skip { next }
     { print }
   ' "$src" > "$src.tmp"
   mv "$src.tmp" "$src"
@@ -216,6 +296,117 @@ test_tool_unknown_rejected() {
   fi
 }
 
+test_vendor_script_excluded_from_skills_copy() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --skills --force
+  assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
+  assert_file_not_exists "$d/.claude/skills/vendor-matt-pocock-skills.sh"
+}
+
+test_vendor_script_mattpocock_skills_have_category() {
+  local f name missing=0
+  for f in "$REPO_ROOT"/skills/*/SKILL.md; do
+    name="$(basename "$(dirname "$f")")"
+    awk '/^---[[:space:]]*$/{n++; next} n==1' "$f" > /tmp/test.sh.frontmatter.$$
+    if grep -qE '^[[:space:]]+author:[[:space:]]*mattpocock[[:space:]]*$' /tmp/test.sh.frontmatter.$$; then
+      if grep -qE '^[[:space:]]+category:[[:space:]]*(engineering|productivity)[[:space:]]*$' /tmp/test.sh.frontmatter.$$; then
+        ok "skills/$name: mattpocock skill carries category"
+      else
+        fail "skills/$name: mattpocock skill missing category"
+        missing=$((missing+1))
+      fi
+    fi
+    rm -f /tmp/test.sh.frontmatter.$$
+  done
+  [ "$missing" -eq 0 ] && ok "all mattpocock-tagged skills carry a category"
+}
+
+test_vendor_script_syntax() {
+  bash -n "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" && ok "vendor-matt-pocock-skills.sh parses" \
+    || fail "vendor-matt-pocock-skills.sh syntax error"
+}
+
+test_vendor_script_help() {
+  local out
+  out="$(bash "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" --help)"
+  printf '%s' "$out" | grep -qF -- "--ref" && ok "--help mentions --ref" || fail "--help missing --ref"
+  printf '%s' "$out" | grep -qF -- "--repo" && ok "--help mentions --repo" || fail "--help missing --repo"
+  printf '%s' "$out" | grep -qF ".claude/skills/" && ok "--help notes .claude/skills/ drift" \
+    || fail "--help doesn't mention .claude/skills/ drift"
+}
+
+test_vendor_script_end_to_end() {
+  local fixture; fixture="$(new_dir)"
+  local shas clean_sha collide_sha badfm_sha
+  shas="$(build_vendor_fixture "$fixture")"
+  clean_sha="$(sed -n '1p' <<<"$shas")"
+  collide_sha="$(sed -n '2p' <<<"$shas")"
+  badfm_sha="$(sed -n '3p' <<<"$shas")"
+
+  local target; target="$(new_dir)"
+  mkdir -p "$target/skills/preexisting-mattpocock" "$target/skills/preexisting-other"
+  cat > "$target/skills/preexisting-mattpocock/SKILL.md" <<'EOF'
+---
+name: preexisting-mattpocock
+description: should be removed, tagged mattpocock
+metadata:
+  author: mattpocock
+---
+Body.
+EOF
+  cat > "$target/skills/preexisting-other/SKILL.md" <<'EOF'
+---
+name: preexisting-other
+description: not tagged, must survive untouched
+---
+Body mentions author: mattpocock in prose only.
+EOF
+
+  local script; script="$(make_local_vendor_script "$fixture")"
+
+  # The script derives its repo root from its own path (dirname/..), so drop
+  # the patched copy into $target/skills/ to scope it at $target.
+  cp "$script" "$target/skills/vendor.sh"
+
+  # Clean ref: removes the tagged skill, leaves the untagged one, adds the two
+  # new ones stamped with author + category.
+  ( cd "$target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) \
+    >"$target/.out" 2>&1 || { echo "vendor script failed:"; cat "$target/.out"; fail "clean ref run failed"; return; }
+
+  assert_file_not_exists "$target/skills/preexisting-mattpocock/SKILL.md"
+  assert_file_exists "$target/skills/preexisting-other/SKILL.md"
+  assert_file_exists "$target/skills/demo-a/SKILL.md"
+  assert_file_exists "$target/skills/demo-b/SKILL.md"
+  assert_contains "$target/skills/demo-a/SKILL.md" "author: mattpocock"
+  assert_contains "$target/skills/demo-a/SKILL.md" "category: engineering"
+  assert_contains "$target/skills/demo-b/SKILL.md" "category: productivity"
+  # demo-b already had a metadata: block (license: MIT) — must be preserved, not clobbered.
+  assert_contains "$target/skills/demo-b/SKILL.md" "license: MIT"
+
+  # Idempotent re-run: byte-identical.
+  local before after
+  before="$(md5sum "$target/skills/demo-a/SKILL.md" | cut -d' ' -f1)"
+  ( cd "$target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) >/dev/null 2>&1
+  after="$(md5sum "$target/skills/demo-a/SKILL.md" | cut -d' ' -f1)"
+  assert_eq "$after" "$before" "re-running at the same ref is idempotent"
+
+  # Collision ref: must die loudly, not silently pick a side.
+  if ( cd "$target" && bash skills/vendor.sh --ref "$collide_sha" --repo unused ) >"$target/.collide.log" 2>&1; then
+    fail "vendor script should have failed on a name collision"
+  else
+    grep -qi "collision" "$target/.collide.log" && ok "vendor script dies loudly on a name collision" \
+      || fail "vendor script failed but without mentioning the collision"
+  fi
+
+  # Bad-frontmatter ref: must die loudly, not stamp garbage.
+  if ( cd "$target" && bash skills/vendor.sh --ref "$badfm_sha" --repo unused ) >"$target/.badfm.log" 2>&1; then
+    fail "vendor script should have failed on a SKILL.md with no frontmatter fences"
+  else
+    grep -qi "frontmatter" "$target/.badfm.log" && ok "vendor script dies loudly on missing frontmatter" \
+      || fail "vendor script failed but without mentioning frontmatter"
+  fi
+}
+
 test_update_script_shipped_and_executable() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -224,7 +415,7 @@ test_update_script_shipped_and_executable() {
     || fail "$d/.devcontainer/update.sh is not executable"
 }
 
-test_update_script_round_trip() {
+test_update_script_full_round_trip() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --tool awscli --force
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
@@ -232,16 +423,88 @@ test_update_script_round_trip() {
 
   local patched_update
   patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
-  if ! ( cd "$d" && bash "$patched_update" -- --force ) >/tmp/test.sh.update.log 2>&1; then
-    echo "update.sh failed (see /tmp/test.sh.update.log):"
+  if ! ( cd "$d" && bash "$patched_update" --full -- --force ) >/tmp/test.sh.update.log 2>&1; then
+    echo "update.sh --full failed (see /tmp/test.sh.update.log):"
     cat /tmp/test.sh.update.log
-    fail "update.sh ran successfully"
+    fail "update.sh --full ran successfully"
     return
   fi
-  ok "update.sh ran successfully"
+  ok "update.sh --full ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
+}
+
+test_update_script_surgical_bumps_and_preserves_edits() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force --extensions
+
+  # Hand-edit: add a local comment + a local custom line, which must survive.
+  sed -i '1i # hand-added local comment' "$d/.devcontainer/Dockerfile"
+  echo "# hand-added local line" >> "$d/.devcontainer/Dockerfile"
+
+  # Fixture "upstream": same files, with CLAUDE_VER and the pinned extension bumped.
+  local up; up="$(new_dir)"
+  mkdir -p "$up/.devcontainer"
+  cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
+  sed -i -E 's/ARG CLAUDE_VER=[0-9.]+/ARG CLAUDE_VER=9.9.999/' "$up/.devcontainer/Dockerfile"
+  sed -i -E 's/ms-azuretools\.vscode-containers@[0-9.]+/ms-azuretools.vscode-containers@9.9.9/' "$up/.devcontainer/devcontainer.json"
+
+  local patched_update
+  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical.log 2>&1; then
+    echo "surgical update.sh failed (see /tmp/test.sh.surgical.log):"
+    cat /tmp/test.sh.surgical.log
+    fail "surgical update.sh ran successfully"
+    return
+  fi
+  ok "surgical update.sh ran successfully"
+
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDE_VER=9.9.999'
+  assert_contains "$d/.devcontainer/devcontainer.json" 'ms-azuretools.vscode-containers@9.9.9'
+  assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local comment'
+  assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local line'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
+}
+
+test_update_script_surgical_skip_summary() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+
+  # Fixture "upstream": drop the GOPLS_VER pin entirely (-> local-only from
+  # this repo's perspective) and add a brand-new pin (-> upstream-only).
+  local up; up="$(new_dir)"
+  mkdir -p "$up/.devcontainer"
+  cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
+  awk '/# renovate:.*depName=golang\.org\/x\/tools\/gopls/ { getline; next } { print }' \
+    "$up/.devcontainer/Dockerfile" > "$up/.devcontainer/Dockerfile.tmp"
+  mv "$up/.devcontainer/Dockerfile.tmp" "$up/.devcontainer/Dockerfile"
+  {
+    echo '# renovate: datasource=npm depName=totally-new-pkg'
+    echo 'ARG TOTALLY_NEW_VER=1.0.0'
+  } >> "$up/.devcontainer/Dockerfile"
+
+  local patched_update out
+  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
+  if ! out="$(cd "$d" && bash "$patched_update" 2>&1)"; then
+    echo "$out"
+    fail "surgical update.sh (skip summary) ran successfully"
+    return
+  fi
+  ok "surgical update.sh (skip summary) ran successfully"
+
+  assert_contains <(printf '%s' "$out") "skipped (local-only, no matching upstream key): ARG GOPLS_VER"
+  assert_contains <(printf '%s' "$out") "skipped (upstream-only, run --full to adopt): ARG TOTALLY_NEW_VER"
+}
+
+test_update_script_help_mentions_full_and_repo() {
+  local out
+  out="$(bash "$REPO_ROOT/.devcontainer/update.sh" --help)"
+  assert_contains <(printf '%s' "$out") "--full"
+  assert_contains <(printf '%s' "$out") "--repo <o/r>"
 }
 
 test_verbatim_extras() {
@@ -375,7 +638,7 @@ test_renovate_regex_covers_pins() {
   alternation="$(grep -oP '(?<=\(\?:)[A-Z_|]+(?=\)=)' "$renovate")"
 
   # ARGs handled by their own dedicated customManagers (version embedded in a URL).
-  local dedicated=" GO_URL NVM_URL "
+  local dedicated=" NVM_URL "
 
   local missing=0
   while IFS= read -r arg_name; do
@@ -392,6 +655,36 @@ test_renovate_regex_covers_pins() {
   done < <(grep -A1 '# renovate:' "$dockerfile" | grep -oP '(?<=^ARG )[A-Z_]+(?==)')
 
   [ "$missing" -eq 0 ] && ok "no renovate-commented ARGs are unmatched"
+
+  # GO_VER used to be GO_URL (version embedded in an amd64-only download URL,
+  # handled by its own dedicated customManager). Assert it's now a plain,
+  # arch-independent ARG covered by the general alternation above, not still
+  # a dedicated URL-based manager.
+  if grep -qP '^ARG GO_VER=\S+$' "$dockerfile" && echo "$alternation" | tr '|' '\n' | grep -qxF "GO_VER"; then
+    ok "GO_VER is a plain ARG covered by the renovate.json5 alternation (not a dedicated URL manager)"
+  else
+    fail "GO_VER is not a plain Renovate-covered ARG in renovate.json5"
+  fi
+}
+
+test_renovate_regex_covers_vendor_script_pin() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  local vendor_script="$REPO_ROOT/skills/vendor-matt-pocock-skills.sh"
+
+  grep -qF "git-refs" "$renovate" && ok "renovate.json5 has a git-refs customManager" \
+    || fail "renovate.json5 is missing a git-refs customManager for the vendor script pin"
+  grep -qF "vendor-matt-pocock-skills" "$renovate" && ok "renovate.json5 customManager targets the vendor script" \
+    || fail "renovate.json5 customManager doesn't target skills/vendor-matt-pocock-skills.sh"
+
+  grep -qE '^# renovate: datasource=git-refs depName=\S+$' "$vendor_script" \
+    && ok "vendor script has a # renovate: git-refs annotation" \
+    || fail "vendor script is missing its # renovate: git-refs annotation"
+  grep -qP '^REF="[0-9a-f]{40}"$' "$vendor_script" \
+    && ok "vendor script's default REF is a full 40-char commit SHA" \
+    || fail "vendor script's default REF isn't a full 40-char commit SHA"
+  grep -qzP '# renovate: datasource=git-refs depName=\S+\nREF="[0-9a-f]{40}"' "$vendor_script" \
+    && ok "the renovate annotation sits directly above REF= (matches renovate.json5's matchStrings)" \
+    || fail "the renovate annotation isn't directly above REF= — renovate.json5's matchStrings won't match"
 }
 
 test_renovate_regex_covers_extension_pins() {
@@ -521,7 +814,7 @@ test_empty_array_expansions_guarded() {
   local scripts=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh")
   local bad=0 f names name hits
   for f in "${scripts[@]}"; do
-    names="$(grep -oE '^[A-Za-z_]+=\(\)' "$f" | sed 's/=()//')"
+    names="$(grep -oE '^[[:space:]]*[A-Za-z_]+=\(\)' "$f" | sed -E 's/^[[:space:]]*//; s/=\(\)//')"
     while IFS= read -r name; do
       [ -z "$name" ] && continue
       # Flag a bare "${NAME[@]}" NOT preceded by '+'. The guarded form
@@ -541,7 +834,7 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -560,8 +853,61 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/test.sh" \
+  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
+}
+
+test_ms_key_pinning() {
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  # Microsoft signs repos.microsoft.com repos created before/after ~May 2025
+  # with two different keys (legacy microsoft.asc vs. microsoft-2025.asc) —
+  # azure-cli (bookworm) predates the cutover, .NET/PowerShell (debian/13
+  # trixie) postdate it, so they're pinned and verified separately.
+  assert_contains "$dockerfile" 'ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF'
+  assert_contains "$dockerfile" 'ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B'
+
+  local n
+  n="$(grep -c 'ACTUAL" = "\$MS_KEY_FP"' "$dockerfile" || true)"
+  [ "$n" -eq 1 ] && ok "azure-cli block verifies against the legacy \$MS_KEY_FP" \
+    || fail "expected 1 legacy \$MS_KEY_FP fingerprint check in Dockerfile (azure-cli), found $n"
+
+  n="$(grep -c 'ACTUAL" = "\$MS_KEY_FP_2025"' "$dockerfile" || true)"
+  [ "$n" -eq 2 ] && ok "dotnet-sdk and powershell blocks verify against \$MS_KEY_FP_2025" \
+    || fail "expected 2 \$MS_KEY_FP_2025 fingerprint checks in Dockerfile (dotnet, powershell), found $n"
+
+  n="$(grep -c 'keys/microsoft.asc' "$dockerfile" || true)"
+  [ "$n" -eq 1 ] && ok "azure-cli block fetches keys/microsoft.asc fresh" \
+    || fail "expected 1 fetch of keys/microsoft.asc (azure-cli), found $n"
+
+  n="$(grep -c 'keys/microsoft-2025.asc' "$dockerfile" || true)"
+  [ "$n" -eq 2 ] && ok "dotnet-sdk and powershell blocks fetch keys/microsoft-2025.asc fresh" \
+    || fail "expected 2 fetches of keys/microsoft-2025.asc, found $n"
+
+  # Regression guard: the legacy and 2025 keys must write to DIFFERENT keyring
+  # files. If both blocks wrote /etc/apt/keyrings/microsoft.gpg, whichever
+  # block ran last would silently overwrite the other's keyring, breaking
+  # apt-get update for any Microsoft source list added by the other block
+  # (this exact bug shipped once: azure-cli clobbering the .NET/PowerShell
+  # 2025 keyring caused "Missing key EE4D7792F748182B" on a combined build).
+  n="$(grep -c 'etc/apt/keyrings/microsoft-2025.gpg' "$dockerfile" || true)"
+  [ "$n" -ge 2 ] && ok "dotnet-sdk and powershell write/reference a keyring file distinct from azure-cli's" \
+    || fail "expected dotnet-sdk/powershell to use a microsoft-2025.gpg keyring separate from azure-cli's microsoft.gpg, found $n references"
+
+  if grep -q 'packages-microsoft-prod.deb' "$dockerfile"; then
+    fail "Dockerfile still references the opaque packages-microsoft-prod.deb config package"
+  else
+    ok "no block installs the unverified packages-microsoft-prod.deb config package"
+  fi
+}
+
+test_ms_key_refresh_workflow_no_automerge() {
+  local wf="$REPO_ROOT/.github/workflows/ms-key-refresh.yml"
+  assert_file_exists "$wf"
+  if grep -q 'gh pr merge --auto' "$wf"; then
+    fail "ms-key-refresh.yml must NOT auto-merge (a trust-anchor rotation requires human review)"
+  else
+    ok "ms-key-refresh.yml has no auto-merge step"
+  fi
 }
 
 test_gitignore_merge() {
@@ -602,6 +948,11 @@ TESTS=(
   test_dotnet_scaffold
   test_tool_scaffold
   test_tool_unknown_rejected
+  test_vendor_script_excluded_from_skills_copy
+  test_vendor_script_mattpocock_skills_have_category
+  test_vendor_script_syntax
+  test_vendor_script_help
+  test_vendor_script_end_to_end
   test_verbatim_extras
   test_extensions_default_off
   test_extensions_opt_in
@@ -610,6 +961,8 @@ TESTS=(
   test_ask_yn_all_sticks_across_subshell
   test_empty_array_expansions_guarded
   test_no_pcre_grep_in_shipped_scripts
+  test_ms_key_pinning
+  test_ms_key_refresh_workflow_no_automerge
   test_gitignore_merge
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing
@@ -619,9 +972,13 @@ TESTS=(
   test_keys_edit_no_plaintext_on_gpg_failure
   test_api_mode_decrypts_keys
   test_update_script_shipped_and_executable
-  test_update_script_round_trip
+  test_update_script_full_round_trip
+  test_update_script_surgical_bumps_and_preserves_edits
+  test_update_script_surgical_skip_summary
+  test_update_script_help_mentions_full_and_repo
   test_shellcheck
   test_renovate_regex_covers_pins
+  test_renovate_regex_covers_vendor_script_pin
   test_renovate_regex_covers_extension_pins
   test_token_set_matches_dockerfile_args
 )
