@@ -2,3 +2,4 @@
 .env.keys.gpg
 .claude/
 .handoffs/
+PRD-*.md
