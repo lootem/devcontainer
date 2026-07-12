@@ -857,6 +857,36 @@ test_shellcheck() {
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
+test_ms_key_pinning() {
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  assert_contains "$dockerfile" 'ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF'
+
+  local n
+  n="$(grep -c 'ACTUAL" = "\$MS_KEY_FP"' "$dockerfile" || true)"
+  [ "$n" -eq 3 ] && ok "dotnet-sdk, azure-cli, and powershell blocks all verify against \$MS_KEY_FP" \
+    || fail "expected 3 MS_KEY_FP fingerprint checks in Dockerfile, found $n"
+
+  n="$(grep -c 'keys/microsoft.asc' "$dockerfile" || true)"
+  [ "$n" -eq 3 ] && ok "all three MS-consuming blocks fetch keys/microsoft.asc fresh" \
+    || fail "expected 3 fetches of keys/microsoft.asc, found $n"
+
+  if grep -q 'packages-microsoft-prod.deb' "$dockerfile"; then
+    fail "Dockerfile still references the opaque packages-microsoft-prod.deb config package"
+  else
+    ok "no block installs the unverified packages-microsoft-prod.deb config package"
+  fi
+}
+
+test_ms_key_refresh_workflow_no_automerge() {
+  local wf="$REPO_ROOT/.github/workflows/ms-key-refresh.yml"
+  assert_file_exists "$wf"
+  if grep -q 'gh pr merge --auto' "$wf"; then
+    fail "ms-key-refresh.yml must NOT auto-merge (a trust-anchor rotation requires human review)"
+  else
+    ok "ms-key-refresh.yml has no auto-merge step"
+  fi
+}
+
 test_gitignore_merge() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -908,6 +938,8 @@ TESTS=(
   test_ask_yn_all_sticks_across_subshell
   test_empty_array_expansions_guarded
   test_no_pcre_grep_in_shipped_scripts
+  test_ms_key_pinning
+  test_ms_key_refresh_workflow_no_automerge
   test_gitignore_merge
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing

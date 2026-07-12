@@ -1,0 +1,77 @@
+name: Microsoft apt Key Rotation Monitor
+
+on:
+  schedule:
+    # Monthly. This is a rotation alarm, not a routine bumper: the .NET,
+    # Azure CLI, and PowerShell Dockerfile blocks fetch keys/microsoft.asc
+    # fresh at build time and only pin its fingerprint, so a routine re-sign
+    # needs no action here. This job exists solely to catch a genuine
+    # fingerprint rotation early. Offset from the Renovate (5:00), base-image
+    # (9:00), and AWS CLI key-refresh (1st, 11:00) runs so nothing races.
+    - cron: '0 13 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  KEY_URL: https://packages.microsoft.com/keys/microsoft.asc
+  DOCKERFILE: .devcontainer/Dockerfile
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Compare live fingerprint against the pinned EXPECTED
+        id: check
+        run: |
+          set -euo pipefail
+
+          OLD="$(grep -oP '(?<=^ARG MS_KEY_FP=)\S+' "$DOCKERFILE")"
+
+          curl -fsSL "$KEY_URL" -o microsoft.asc
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          gpg --batch --import microsoft.asc
+          NEW="$(gpg --show-keys --fingerprint microsoft.asc 2>/dev/null | grep -A1 "pub" | tail -1 | tr -d ' ')"
+          rm -f microsoft.asc
+
+          echo "old=$OLD" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+
+          if [ "$NEW" != "$OLD" ]; then
+            echo "::warning::Microsoft apt signing key fingerprint changed: $OLD -> $NEW"
+            sed -i "s/^ARG MS_KEY_FP=.*/ARG MS_KEY_FP=$NEW/" "$DOCKERFILE"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # NOTE: intentionally no auto-merge step. A changed trust-anchor
+      # fingerprint is exactly the event an attacker forging a key rotation
+      # would want rubber-stamped — this PR must get human security review.
+      - name: Open PR
+        if: steps.check.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+          commit-message: 'security: bump pinned Microsoft apt signing key fingerprint'
+          title: 'SECURITY: Microsoft apt signing key rotation — requires manual review'
+          body: |
+            `keys/microsoft.asc`'s fingerprint no longer matches the pinned
+            `MS_KEY_FP` in `.devcontainer/Dockerfile`.
+
+            - Old fingerprint: `${{ steps.check.outputs.old }}`
+            - New fingerprint: `${{ steps.check.outputs.new }}`
+            - Source: ${{ env.KEY_URL }}
+
+            This is either a genuine Microsoft key rotation or a compromised/
+            MITM'd feed. **Do not merge without independently verifying the new
+            fingerprint against a source you trust** (e.g. Microsoft's own
+            documentation, a second network path, or direct contact with
+            Microsoft). Do not enable auto-merge on this PR.
+          branch: refresh-ms-apt-key-fingerprint
+          delete-branch: true
