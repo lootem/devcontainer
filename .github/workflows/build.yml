@@ -43,9 +43,19 @@ jobs:
 
   # Always runs (job-level, not gated) so it stays a valid required status
   # check on PRs that don't touch the Dockerfile - steps below no-op instead.
+  # Native runners build each arch directly - no QEMU emulation.
   build:
     needs: detect
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -58,13 +68,15 @@ jobs:
       # Build with every feature ARG on so a bump to any feature layer
       # (azcli/pwsh/azpwsh/awscli included) actually compiles, not just the
       # default python/go/js/dotnet baseline. Never pushed - PRs never get
-      # registry credentials.
+      # registry credentials. Both arches must build - a missing arm64 build
+      # is a failure, never a silent skip.
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         if: needs.detect.outputs.dockerfile == 'true' && github.event_name != 'push'
         with:
           context: .
           file: .devcontainer/Dockerfile
           push: false
+          platforms: ${{ matrix.platform }}
           build-args: |
             GOLANG=true
             PYTHON=true
@@ -74,43 +86,30 @@ jobs:
             POWERSHELL=true
             AZPWSH=true
             AWSCLI=true
+          cache-from: type=gha,scope=pr-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=pr-${{ matrix.arch }}
 
-  # Publishes the standalone Docker Hub images (see README "pull & run"). Only
+  # Publishes the standalone Docker Hub image (see README "pull & run"). Only
   # fires on a Dockerfile change landing on main - never on PRs, so registry
   # credentials are never exposed to a PR build. install.sh remains the
-  # reproducible, pinned path; these are rolling convenience tags.
+  # reproducible, pinned path; this is a rolling convenience tag.
+  #
+  # Each native runner builds `all` for its own arch and pushes it by digest
+  # (no tag yet, so neither digest is user-visible on its own); the merge job
+  # below then combines both digests into the single multi-arch `:all` tag.
   publish:
     needs: detect
     if: needs.detect.outputs.dockerfile == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          # Every feature ARG defaults to false in the Dockerfile, so each
-          # per-language image only needs its own flag flipped on. (The `all`
-          # image below is the only one that pulls in the CLIs.)
-          - tag: python
-            build-args: |
-              PYTHON=true
-          - tag: go
-            build-args: |
-              GOLANG=true
-          - tag: js
-            build-args: |
-              NODEJS=true
-          - tag: dotnet
-            build-args: |
-              DOTNET=true
-          - tag: all
-            build-args: |
-              GOLANG=true
-              PYTHON=true
-              NODEJS=true
-              DOTNET=true
-              AZCLI=true
-              POWERSHELL=true
-              AZPWSH=true
-              AWSCLI=true
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -122,12 +121,58 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        id: build
         with:
           context: .
           file: .devcontainer/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: lootemsec/devcontainer:${{ matrix.tag }}
-          build-args: ${{ matrix.build-args }}
-          cache-from: type=gha,scope=${{ matrix.tag }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.tag }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=lootemsec/devcontainer,push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            GOLANG=true
+            PYTHON=true
+            NODEJS=true
+            DOTNET=true
+            AZCLI=true
+            POWERSHELL=true
+            AZPWSH=true
+            AWSCLI=true
+          cache-from: type=gha,scope=all-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=all-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Combines the per-arch digests published above into the single multi-arch
+  # `lootemsec/devcontainer:all` manifest list.
+  merge:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create and push manifest list
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t lootemsec/devcontainer:all \
+            $(printf 'lootemsec/devcontainer@sha256:%s ' *)

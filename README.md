@@ -70,17 +70,17 @@ upstream (expected - a generated repo has no Renovate config of its own).
 
 ### Prefer a prebuilt image?
 
-If you just want to `docker run`, prebuilt images are on [Docker Hub](https://hub.docker.com/repository/docker/lootemsec/devcontainer) as rolling
-tags (rebuilt on every Dockerfile change on `main`, **amd64 only**):
+If you just want to `docker run`, a prebuilt image is on [Docker Hub](https://hub.docker.com/repository/docker/lootemsec/devcontainer) as a rolling,
+multi-arch (**amd64 + arm64**) tag (rebuilt on every Dockerfile change on `main`):
 
 ```bash
-docker pull lootemsec/devcontainer:python   # or go, js, dotnet
 docker pull lootemsec/devcontainer:all      # every language + cloud CLI
 ```
 
-Only `:all` includes the AWS/Azure CLIs and PowerShell; all images ship Claude
-Code pre-installed with auto-update disabled. For reproducible, pinned, supply-
-chain-gated builds, use `install.sh` instead.
+This single `:all` tag includes every language plus the AWS/Azure CLIs and
+PowerShell; it ships Claude Code pre-installed with auto-update disabled. For
+reproducible, pinned, supply-chain-gated, per-language builds, use `install.sh`
+instead.
 
 ## What you get
 

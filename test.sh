@@ -375,7 +375,7 @@ test_renovate_regex_covers_pins() {
   alternation="$(grep -oP '(?<=\(\?:)[A-Z_|]+(?=\)=)' "$renovate")"
 
   # ARGs handled by their own dedicated customManagers (version embedded in a URL).
-  local dedicated=" GO_URL NVM_URL "
+  local dedicated=" NVM_URL "
 
   local missing=0
   while IFS= read -r arg_name; do
@@ -392,6 +392,16 @@ test_renovate_regex_covers_pins() {
   done < <(grep -A1 '# renovate:' "$dockerfile" | grep -oP '(?<=^ARG )[A-Z_]+(?==)')
 
   [ "$missing" -eq 0 ] && ok "no renovate-commented ARGs are unmatched"
+
+  # GO_VER used to be GO_URL (version embedded in an amd64-only download URL,
+  # handled by its own dedicated customManager). Assert it's now a plain,
+  # arch-independent ARG covered by the general alternation above, not still
+  # a dedicated URL-based manager.
+  if grep -qP '^ARG GO_VER=\S+$' "$dockerfile" && echo "$alternation" | tr '|' '\n' | grep -qxF "GO_VER"; then
+    ok "GO_VER is a plain ARG covered by the renovate.json5 alternation (not a dedicated URL manager)"
+  else
+    fail "GO_VER is not a plain Renovate-covered ARG in renovate.json5"
+  fi
 }
 
 test_renovate_regex_covers_extension_pins() {

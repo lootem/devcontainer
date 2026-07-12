@@ -22,20 +22,12 @@
   customManagers: [
     {
       // ARG pins, comment on the line above. ARG names are enumerated so
-      // this doesn't also match GO_URL/NVM_URL, whose version is a URL
-      // substring rather than the whole ARG value.
+      // this doesn't also match NVM_URL, whose version is a URL substring
+      // rather than the whole ARG value.
       customType: 'regex',
       managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
       matchStrings: [
-        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER)=(?<currentValue>\\S+)',
-      ],
-    },
-    {
-      // GO_URL: version embedded in the download URL.
-      customType: 'regex',
-      managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
-      matchStrings: [
-        '# renovate: datasource=(?<datasource>golang-version) depName=(?<depName>go)\\s+ARG GO_URL=https://go\\.dev/dl/go(?<currentValue>[0-9.]+)\\.linux-amd64\\.tar\\.gz',
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER)=(?<currentValue>\\S+)',
       ],
     },
     {

@@ -18,15 +18,21 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
       # trixie is a rolling tag Renovate can't reliably date, so resolve the
       # digest and the image's age here and apply the same 7-day gate.
+      # `imagetools inspect` resolves the multi-arch index digest directly
+      # from the registry (deterministic), rather than `docker pull` +
+      # `RepoDigests[0]`, which is only stable for whichever single-arch
+      # manifest the local daemon happened to pull.
       - name: Resolve digest and age
         id: resolve
         run: |
           set -euo pipefail
           IMAGE="mcr.microsoft.com/devcontainers/base:trixie"
+          NEW_DIGEST=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | jq -r .)
           docker pull "$IMAGE" >/dev/null
-          NEW_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d@ -f2)
           CREATED=$(docker inspect --format='{{.Created}}' "$IMAGE")
           AGE_DAYS=$(( ( $(date +%s) - $(date -d "$CREATED" +%s) ) / 86400 ))
           CURRENT_DIGEST=$(grep -oP '(?<=trixie@)sha256:[0-9a-f]+' .devcontainer/Dockerfile)

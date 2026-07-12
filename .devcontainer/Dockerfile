@@ -54,7 +54,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_URL=https://go.dev/dl/go1.26.4.linux-amd64.tar.gz
+ARG GO_VER=1.26.4
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 
@@ -63,7 +63,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends build-essential make mingw-w64 && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "${GO_URL}" | tar -xz -C /usr/local;\
+    curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local;\
     fi
 USER vscode
 RUN if [ "$GOLANG" = "true" ]; then \
@@ -160,7 +160,7 @@ ARG AZPWSH_VER=15.1.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$POWERSHELL" = "true" ] || [ "$AZPWSH" = "true" ]; then \
-    wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VER}/powershell_${PWSH_VER}-1.deb_amd64.deb" -O /tmp/powershell.deb && \
+    wget -q "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VER}/powershell_${PWSH_VER}-1.deb_$(dpkg --print-architecture).deb" -O /tmp/powershell.deb && \
     dpkg -i /tmp/powershell.deb; \
     apt-get install -f -y && \
     rm /tmp/powershell.deb && \
@@ -178,9 +178,10 @@ ARG AWS_VER=2.35.14
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$AWS_VER.zip" \
+    ARCH="$(uname -m)" && \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}-$AWS_VER.zip" \
     -o /tmp/awscliv2.zip && \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$AWS_VER.zip.sig" \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}-$AWS_VER.zip.sig" \
     -o /tmp/awscliv2.sig && \
     gpg --import /tmp/awscli.pub && \
     ACTUAL=$(gpg --fingerprint A6310ACC4672475C 2>/dev/null \
