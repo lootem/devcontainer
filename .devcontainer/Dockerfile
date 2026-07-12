@@ -14,9 +14,7 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-    wget curl git jq lsb-release net-tools \
-    apt-transport-https bash unzip whois \
-    libssl-dev gnupg2 iputils-ping ca-certificates \
+    bind9-dnsutils whois iputils-ping \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
