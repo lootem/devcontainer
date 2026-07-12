@@ -113,14 +113,6 @@ USER root
 # End Node.js
 
 # -- Microsoft apt signing keys (shared by .NET, Azure CLI, PowerShell below)
-# Microsoft signs repos with one of two keys depending on when the repo was
-# created (see https://learn.microsoft.com/en-us/linux/packages#how-to-use-the-gpg-repository-signing-key):
-# repos.microsoft.com/repos/azure-cli (bookworm) predates the cutover and is
-# still signed by the legacy microsoft.asc key; debian/13/prod (trixie) was
-# created after and is signed by the newer microsoft-2025.asc key. Each
-# fingerprint is stable across Microsoft's periodic re-signs of its own key;
-# only a genuine key rotation changes it (monitored by
-# .github/workflows/ms-key-refresh.yml, which opens a PR for human review).
 ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF
 ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B
 
