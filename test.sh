@@ -66,8 +66,8 @@ PATCH_DIR="$(mktemp -d)"
 SCRATCH_DIRS+=("$PATCH_DIR")
 INSTALL="$(make_local_install)"
 
-# update.sh normally fetches install.sh from https://ltm.sh/dev/<ref>; for
-# tests, swap that one line for a direct call to the patched local install.sh.
+# update.sh --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
+# for tests, swap that one line for a direct call to the patched local install.sh.
 UPDATE_CURL_LINE='curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"'
 
 make_local_update() { # make_local_update <path-to-update.sh> -> patches it in place, prints its path
@@ -78,6 +78,26 @@ make_local_update() { # make_local_update <path-to-update.sh> -> patches it in p
   # root via its own path (BASH_SOURCE), so it must stay under .devcontainer/.
   awk -v old="$UPDATE_CURL_LINE" -v install="$INSTALL" '
     $0 == old { print "bash \"" install "\" \"${ARGS[@]}\""; next }
+    { print }
+  ' "$src" > "$src.tmp"
+  mv "$src.tmp" "$src"
+  chmod +x "$src"
+  printf '%s' "$src"
+}
+
+# Surgical update.sh (the default mode) fetches upstream's Dockerfile +
+# devcontainer.json via fetch_upstream(); for tests, swap that function's body
+# for a `cp` from a local fixture "upstream" .devcontainer/ dir instead.
+UPDATE_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <relative-path-under-.devcontainer> <dest>'
+
+make_local_update_surgical() { # make_local_update_surgical <path-to-update.sh> <upstream-dir> -> patches it in place, prints its path
+  local src="$1" upstream_dir="$2"
+  grep -qF "$UPDATE_FETCH_FUNC_START" "$src" \
+    || { echo "test.sh: update.sh's fetch_upstream() signature has changed — update UPDATE_FETCH_FUNC_START in test.sh" >&2; exit 1; }
+  awk -v up="$upstream_dir" '
+    /^fetch_upstream\(\) \{/ { print "fetch_upstream() { cp \"" up "/.devcontainer/$1\" \"$2\"; }"; skip=1; next }
+    skip && /^}/ { skip=0; next }
+    skip { next }
     { print }
   ' "$src" > "$src.tmp"
   mv "$src.tmp" "$src"
@@ -224,7 +244,7 @@ test_update_script_shipped_and_executable() {
     || fail "$d/.devcontainer/update.sh is not executable"
 }
 
-test_update_script_round_trip() {
+test_update_script_full_round_trip() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --tool awscli --force
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
@@ -232,16 +252,88 @@ test_update_script_round_trip() {
 
   local patched_update
   patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
-  if ! ( cd "$d" && bash "$patched_update" -- --force ) >/tmp/test.sh.update.log 2>&1; then
-    echo "update.sh failed (see /tmp/test.sh.update.log):"
+  if ! ( cd "$d" && bash "$patched_update" --full -- --force ) >/tmp/test.sh.update.log 2>&1; then
+    echo "update.sh --full failed (see /tmp/test.sh.update.log):"
     cat /tmp/test.sh.update.log
-    fail "update.sh ran successfully"
+    fail "update.sh --full ran successfully"
     return
   fi
-  ok "update.sh ran successfully"
+  ok "update.sh --full ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
+}
+
+test_update_script_surgical_bumps_and_preserves_edits() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force --extensions
+
+  # Hand-edit: add a local comment + a local custom line, which must survive.
+  sed -i '1i # hand-added local comment' "$d/.devcontainer/Dockerfile"
+  echo "# hand-added local line" >> "$d/.devcontainer/Dockerfile"
+
+  # Fixture "upstream": same files, with CLAUDE_VER and the pinned extension bumped.
+  local up; up="$(new_dir)"
+  mkdir -p "$up/.devcontainer"
+  cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
+  sed -i -E 's/ARG CLAUDE_VER=[0-9.]+/ARG CLAUDE_VER=9.9.999/' "$up/.devcontainer/Dockerfile"
+  sed -i -E 's/ms-azuretools\.vscode-containers@[0-9.]+/ms-azuretools.vscode-containers@9.9.9/' "$up/.devcontainer/devcontainer.json"
+
+  local patched_update
+  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical.log 2>&1; then
+    echo "surgical update.sh failed (see /tmp/test.sh.surgical.log):"
+    cat /tmp/test.sh.surgical.log
+    fail "surgical update.sh ran successfully"
+    return
+  fi
+  ok "surgical update.sh ran successfully"
+
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDE_VER=9.9.999'
+  assert_contains "$d/.devcontainer/devcontainer.json" 'ms-azuretools.vscode-containers@9.9.9'
+  assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local comment'
+  assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local line'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
+}
+
+test_update_script_surgical_skip_summary() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+
+  # Fixture "upstream": drop the GOPLS_VER pin entirely (-> local-only from
+  # this repo's perspective) and add a brand-new pin (-> upstream-only).
+  local up; up="$(new_dir)"
+  mkdir -p "$up/.devcontainer"
+  cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
+  awk '/# renovate:.*depName=golang\.org\/x\/tools\/gopls/ { getline; next } { print }' \
+    "$up/.devcontainer/Dockerfile" > "$up/.devcontainer/Dockerfile.tmp"
+  mv "$up/.devcontainer/Dockerfile.tmp" "$up/.devcontainer/Dockerfile"
+  {
+    echo '# renovate: datasource=npm depName=totally-new-pkg'
+    echo 'ARG TOTALLY_NEW_VER=1.0.0'
+  } >> "$up/.devcontainer/Dockerfile"
+
+  local patched_update out
+  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
+  if ! out="$(cd "$d" && bash "$patched_update" 2>&1)"; then
+    echo "$out"
+    fail "surgical update.sh (skip summary) ran successfully"
+    return
+  fi
+  ok "surgical update.sh (skip summary) ran successfully"
+
+  assert_contains <(printf '%s' "$out") "skipped (local-only, no matching upstream key): ARG GOPLS_VER"
+  assert_contains <(printf '%s' "$out") "skipped (upstream-only, run --full to adopt): ARG TOTALLY_NEW_VER"
+}
+
+test_update_script_help_mentions_full_and_repo() {
+  local out
+  out="$(bash "$REPO_ROOT/.devcontainer/update.sh" --help)"
+  assert_contains <(printf '%s' "$out") "--full"
+  assert_contains <(printf '%s' "$out") "--repo <o/r>"
 }
 
 test_verbatim_extras() {
@@ -531,7 +623,7 @@ test_empty_array_expansions_guarded() {
   local scripts=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh")
   local bad=0 f names name hits
   for f in "${scripts[@]}"; do
-    names="$(grep -oE '^[A-Za-z_]+=\(\)' "$f" | sed 's/=()//')"
+    names="$(grep -oE '^[[:space:]]*[A-Za-z_]+=\(\)' "$f" | sed -E 's/^[[:space:]]*//; s/=\(\)//')"
     while IFS= read -r name; do
       [ -z "$name" ] && continue
       # Flag a bare "${NAME[@]}" NOT preceded by '+'. The guarded form
@@ -629,7 +721,10 @@ TESTS=(
   test_keys_edit_no_plaintext_on_gpg_failure
   test_api_mode_decrypts_keys
   test_update_script_shipped_and_executable
-  test_update_script_round_trip
+  test_update_script_full_round_trip
+  test_update_script_surgical_bumps_and_preserves_edits
+  test_update_script_surgical_skip_summary
+  test_update_script_help_mentions_full_and_repo
   test_shellcheck
   test_renovate_regex_covers_pins
   test_renovate_regex_covers_extension_pins

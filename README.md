@@ -56,16 +56,29 @@ entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
 
 ### Keeping a generated repo up to date
 
-Every generated repo gets a `.devcontainer/update.sh` that detects your enabled
-languages, tools, `--skills`, and `--extensions` and re-runs `install.sh`, so
-you needn't remember your original flags. It's manual only, and re-syncing
-resets the Dockerfile's pinned tool versions to whatever the target ref pins
-upstream (expected - a generated repo has no Renovate config of its own).
+Every generated repo gets a `.devcontainer/update.sh`, manual only. By default
+it runs **surgical**: it fetches upstream's `Dockerfile` + `devcontainer.json`
+(parsed only, never executed) and bumps in place every pinned version this
+repo already tracks - each `# renovate:`-annotated `ARG`, the base image
+`@sha256:` digest, and `devcontainer.json` extension `@version` pins - for keys
+present both locally and upstream. Toggle `ARG`s, comments, and any other local
+edits are left untouched. It prints a summary of what bumped and what was
+skipped (and why).
 
 ```bash
-.devcontainer/update.sh                 # re-sync against lootem/devcontainer@main
+.devcontainer/update.sh                 # bump pins from lootem/devcontainer@main
 .devcontainer/update.sh --ref <sha>     # pin to a specific commit
-.devcontainer/update.sh -- --force      # forward extra flags to install.sh
+.devcontainer/update.sh --repo <owner/repo>  # pull pins from a fork
+```
+
+`--full` instead re-runs `install.sh` and overwrites `.devcontainer/` wholesale
+(the original behavior) - useful for pulling in structural upstream changes
+(e.g. a new arch layout), but it clobbers local Dockerfile/devcontainer.json
+edits:
+
+```bash
+.devcontainer/update.sh --full
+.devcontainer/update.sh --full -- --force    # forward extra flags to install.sh
 ```
 
 ### Prefer a prebuilt image?

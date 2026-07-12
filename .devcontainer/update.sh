@@ -1,71 +1,69 @@
 #!/usr/bin/env bash
 #
-# .devcontainer/update.sh — re-sync this repo from lootem/devcontainer, keeping
-# whatever languages/tools/options are currently enabled.
+# .devcontainer/update.sh — pull upstream version bumps into this generated repo.
 #
 # Manual only: this is NOT wired into any devcontainer lifecycle hook, so
-# `curl|bash` never runs without you typing it yourself. Run it after an
-# upstream change (e.g. a Dockerfile version bump) you want to pull in:
+# nothing runs without you typing it yourself.
 #
-#   .devcontainer/update.sh
+# Default (surgical): bumps only the pinned versions this repo already tracks
+# (Renovate-annotated ARGs, the base image digest, devcontainer.json extension
+# pins) in place, leaving everything else — local edits, toggle ARGs, layer
+# structure — untouched. Upstream files are only ever parsed, never executed.
+#
+#   .devcontainer/update.sh                      # bump pins from lootem/devcontainer@main
 #   .devcontainer/update.sh --ref <sha>          # pin to a specific commit
-#   .devcontainer/update.sh -- --force           # forward extra args to install.sh
+#   .devcontainer/update.sh --repo <owner/repo>  # pull pins from a fork
 #
-# Note: this resets .devcontainer/Dockerfile's pinned tool versions to
-# whatever <ref> currently pins upstream — that IS the update, since generated
-# repos have no Renovate of their own to bump those pins independently.
+# --full re-baselines the whole .devcontainer/ from upstream instead (today's
+# behavior before this flag existed) — the only path to structural changes
+# (e.g. adopting a new arch layout), but it overwrites local Dockerfile/
+# devcontainer.json edits:
+#
+#   .devcontainer/update.sh --full
+#   .devcontainer/update.sh --full -- --force    # forward extra args to install.sh
 
 set -euo pipefail
 
-# The install.sh this script invokes below overwrites this very file (it's
-# copied verbatim into every generated repo). Re-exec from a throwaway copy
-# first, so bash isn't still reading this file off disk when that happens —
-# otherwise the in-place rewrite can truncate the running script mid-read.
-if [ -z "${UPDATE_SH_REEXECED:-}" ]; then
-  ORIG_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-  TMP_SELF="$(mktemp)"
-  cp "$ORIG_SELF" "$TMP_SELF"
-  chmod +x "$TMP_SELF"
-  exec env UPDATE_SH_REEXECED=1 UPDATE_SH_ORIG="$ORIG_SELF" UPDATE_SH_TMP_SELF="$TMP_SELF" \
-    bash "$TMP_SELF" "$@"
-fi
-trap 'rm -f "$UPDATE_SH_TMP_SELF"' EXIT
-
-SCRIPT_DIR="$(cd "$(dirname "$UPDATE_SH_ORIG")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCKERFILE="$REPO_ROOT/.devcontainer/Dockerfile"
-DEVCONTAINER_JSON="$REPO_ROOT/.devcontainer/devcontainer.json"
-
 REF="main"
+REPO="lootem/devcontainer"
+FULL=false
 EXTRA_ARGS=()
+# Preserved for the --full re-exec below, which needs the ORIGINAL argv (the
+# parsing loop consumes "$@" via shift as it goes). "$@" itself is exempt from
+# `set -u`'s empty-array restriction even on bash 3.2, so no extra guard needed.
+ORIGINAL_ARGS=("$@")
 
 die()  { echo "Error: $*" >&2; exit 1; }
 info() { echo "[update] $*"; }
 
 usage() {
   cat <<EOF
-Usage: update.sh [--ref <ref>] [-- <extra install.sh args>]
+Usage: update.sh [--full] [--repo <owner/repo>] [--ref <ref>] [-- <extra install.sh args>]
 
-Detects the languages/tools/skills/extensions currently enabled in this
-repo's .devcontainer/, then re-runs install.sh from lootem/devcontainer
-against them to pull in upstream changes.
+Default (surgical): fetches upstream's .devcontainer/Dockerfile +
+devcontainer.json (parse-only) and bumps in place every pinned version this
+repo already tracks — Renovate-annotated ARGs, the base image @sha256: digest,
+and devcontainer.json extension @version pins — for keys present both locally
+and upstream. Everything else (toggle ARGs, comments, local edits) is left
+alone. Prints a summary of what bumped and what was skipped.
 
-      --ref <ref>   Branch/tag/commit to pull (default: $REF). Pin to a
-                     commit sha for reproducibility (served at ltm.sh/dev/<ref>).
+      --full        Re-run install.sh and overwrite .devcontainer/ wholesale
+                     (today's behavior) instead of the surgical transplant.
+                     Only path to structural upstream changes.
+      --repo <o/r>  Source repo for pins/install.sh (default: $REPO)
+      --ref <ref>   Branch/tag/commit to pull (default: $REF)
   -h, --help        Show this help
 
-Anything after a lone "--" is forwarded verbatim to the fetched install.sh
-(e.g. "-- --force" to overwrite files without prompting).
-
-Run this from an interactive terminal: install.sh prompts before overwriting
-files, and with no TTY those prompts default to "no" — so a non-interactive
-run would skip the Dockerfile update entirely. Use "-- --force" if you must
-run it unattended.
+Anything after a lone "--" is forwarded verbatim to install.sh; only used
+with --full (e.g. "--full -- --force" to overwrite files without prompting).
 EOF
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --full)    FULL=true; shift ;;
+    --repo)    REPO="$2"; shift 2 ;;
+    --repo=*)  REPO="${1#*=}"; shift ;;
     --ref)     REF="$2"; shift 2 ;;
     --ref=*)   REF="${1#*=}"; shift ;;
     --)        shift; EXTRA_ARGS=("$@"); break ;;
@@ -74,8 +72,201 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# The install.sh --full invokes below overwrites this very file (it's copied
+# verbatim into every generated repo). Re-exec from a throwaway copy first, so
+# bash isn't still reading this file off disk when that happens — otherwise
+# the in-place rewrite can truncate the running script mid-read. Surgical mode
+# never runs install.sh, so it can't self-overwrite and skips this entirely.
+if [ "$FULL" = true ] && [ -z "${UPDATE_SH_REEXECED:-}" ]; then
+  ORIG_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  TMP_SELF="$(mktemp)"
+  cp "$ORIG_SELF" "$TMP_SELF"
+  chmod +x "$TMP_SELF"
+  exec env UPDATE_SH_REEXECED=1 UPDATE_SH_ORIG="$ORIG_SELF" UPDATE_SH_TMP_SELF="$TMP_SELF" \
+    bash "$TMP_SELF" "${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}"
+fi
+if [ -n "${UPDATE_SH_TMP_SELF:-}" ]; then
+  trap 'rm -f "$UPDATE_SH_TMP_SELF"' EXIT
+fi
+
+SELF_PATH="${UPDATE_SH_ORIG:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")}"
+SCRIPT_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DOCKERFILE="$REPO_ROOT/.devcontainer/Dockerfile"
+DEVCONTAINER_JSON="$REPO_ROOT/.devcontainer/devcontainer.json"
+
 [ -f "$DOCKERFILE" ] \
   || die "No .devcontainer/Dockerfile found at $DOCKERFILE — run this from a repo generated by install.sh."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Surgical mode (default)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Fetch a single upstream .devcontainer file, parse-only (never executed).
+# Kept as its own function/line-pair so tests can swap it for a local `cp`.
+fetch_upstream() { # fetch_upstream <relative-path-under-.devcontainer> <dest>
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/.devcontainer/$1" -o "$2" \
+    || die "Failed to fetch upstream $1 from https://raw.githubusercontent.com/$REPO/$REF/.devcontainer/$1"
+}
+
+# ARG names annotated by a `# renovate:` comment on the line directly above —
+# i.e. the ones Renovate (or a dedicated workflow, for the base digest) tracks.
+# NB: no `grep -P` — BSD grep on macOS lacks PCRE support.
+renovate_arg_names() { # renovate_arg_names <dockerfile> -> ARG names, one per line
+  awk '/^# renovate:/ { f=1; next } f { print; f=0 }' "$1" \
+    | sed -n -E 's/^ARG ([A-Z_]+)=.*$/\1/p'
+}
+
+arg_value() { # arg_value <dockerfile> <name> -> current value (empty if absent)
+  sed -n -E "s/^ARG $2=(.*)\$/\1/p" "$1" | head -1
+}
+
+# Replace, in $1 (mutated in place), the value of every renovate-tracked ARG
+# whose name also appears upstream. Anchored on the preceding `# renovate:`
+# comment (not on `ARG ...=` in general) so a toggle ARG can never be touched,
+# even if its name happened to collide.
+transplant_dockerfile_pins() { # transplant_dockerfile_pins <local> <upstream>
+  local local_df="$1" upstream_df="$2" tmp
+  tmp="$(mktemp)"
+  cp "$local_df" "$tmp"
+
+  local local_keys upstream_keys key lval uval
+  local_keys="$(renovate_arg_names "$local_df")"
+  upstream_keys="$(renovate_arg_names "$upstream_df")"
+
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
+    if ! printf '%s\n' "$upstream_keys" | grep -qxF "$key"; then
+      SKIPPED_LOCAL_ONLY+=("ARG $key")
+      continue
+    fi
+    lval="$(arg_value "$tmp" "$key")"
+    uval="$(arg_value "$upstream_df" "$key")"
+    [ -z "$uval" ] && continue
+    [ "$lval" = "$uval" ] && continue
+    awk -v name="$key" -v newval="$uval" '
+      /^# renovate:/ {
+        print
+        if ((getline nxt) > 0) {
+          if (nxt ~ ("^ARG " name "=")) { print "ARG " name "=" newval } else { print nxt }
+        }
+        next
+      }
+      { print }
+    ' "$tmp" > "$tmp.new"
+    mv "$tmp.new" "$tmp"
+    BUMPED+=("ARG $key: $lval -> $uval")
+  done <<< "$local_keys"
+
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
+    printf '%s\n' "$local_keys" | grep -qxF "$key" || SKIPPED_UPSTREAM_ONLY+=("ARG $key")
+  done <<< "$upstream_keys"
+
+  mv "$tmp" "$local_df"
+}
+
+# The base image digest isn't `# renovate:`-annotated (a separate workflow
+# tracks it, since the docker datasource can't date a rolling tag) — handle it
+# as its own single-line transplant, matched by image name.
+transplant_base_digest() { # transplant_base_digest <local> <upstream>
+  local local_df="$1" upstream_df="$2"
+  local limage ldigest uimage udigest
+  limage="$(sed -n -E 's/^FROM ([^@[:space:]]+)@sha256:[0-9a-f]+.*$/\1/p' "$local_df" | head -1)"
+  ldigest="$(sed -n -E 's/^FROM [^@[:space:]]+@(sha256:[0-9a-f]+).*$/\1/p' "$local_df" | head -1)"
+  uimage="$(sed -n -E 's/^FROM ([^@[:space:]]+)@sha256:[0-9a-f]+.*$/\1/p' "$upstream_df" | head -1)"
+  udigest="$(sed -n -E 's/^FROM [^@[:space:]]+@(sha256:[0-9a-f]+).*$/\1/p' "$upstream_df" | head -1)"
+
+  if [ -z "$ldigest" ] || [ -z "$udigest" ] || [ "$limage" != "$uimage" ]; then
+    SKIPPED_LOCAL_ONLY+=("base image digest (no matching FROM upstream)")
+    return
+  fi
+  [ "$ldigest" = "$udigest" ] && return
+
+  # Scoped to the FROM line only (not a file-wide replace) — a digest string
+  # is effectively unique, but there's no reason to risk a stray match.
+  awk -v old="@${ldigest}" -v new="@${udigest}" '
+    /^FROM / { sub(old, new) }
+    { print }
+  ' "$local_df" > "$local_df.tmp" && mv "$local_df.tmp" "$local_df"
+  BUMPED+=("base image digest: $ldigest -> $udigest")
+}
+
+# devcontainer.json extension pins ("publisher.name@x.y.z"), matched by
+# extension id (the part before the last "@").
+transplant_devcontainer_json_pins() { # transplant_devcontainer_json_pins <local> <upstream>
+  local local_json="$1" upstream_json="$2"
+  if ! command -v jq >/dev/null 2>&1; then
+    info "jq not found — skipping devcontainer.json extension pin transplant"
+    return
+  fi
+  [ -f "$local_json" ] || return
+  [ -f "$upstream_json" ] || return
+
+  local local_exts upstream_exts ext id uext uver lver
+  local_exts="$(jq -r '(.customizations.vscode.extensions // [])[] | select(test("@"))' "$local_json" 2>/dev/null || true)"
+  upstream_exts="$(jq -r '(.customizations.vscode.extensions // [])[] | select(test("@"))' "$upstream_json" 2>/dev/null || true)"
+
+  while IFS= read -r ext; do
+    [ -z "$ext" ] && continue
+    id="${ext%@*}"
+    lver="${ext##*@}"
+    uext="$(printf '%s\n' "$upstream_exts" | grep -F "${id}@" || true)"
+    if [ -z "$uext" ]; then
+      SKIPPED_LOCAL_ONLY+=("devcontainer.json extension $id")
+      continue
+    fi
+    uver="${uext##*@}"
+    [ "$lver" = "$uver" ] && continue
+    jq --arg old "$ext" --arg new "$uext" \
+      '(.customizations.vscode.extensions // []) |= map(if . == $old then $new else . end)' \
+      "$local_json" > "$local_json.tmp" && mv "$local_json.tmp" "$local_json"
+    BUMPED+=("devcontainer.json $id: $lver -> $uver")
+  done <<< "$local_exts"
+
+  while IFS= read -r ext; do
+    [ -z "$ext" ] && continue
+    id="${ext%@*}"
+    printf '%s\n' "$local_exts" | grep -qF "${id}@" || SKIPPED_UPSTREAM_ONLY+=("devcontainer.json extension $id")
+  done <<< "$upstream_exts"
+}
+
+run_surgical() {
+  info "Surgical mode: transplanting pinned versions from $REPO@$REF (parse-only, never executed)"
+
+  local up_dockerfile up_devcontainer
+  up_dockerfile="$(mktemp)"
+  up_devcontainer="$(mktemp)"
+  trap 'rm -f "$up_dockerfile" "$up_devcontainer"' RETURN
+
+  fetch_upstream "Dockerfile" "$up_dockerfile"
+  fetch_upstream "devcontainer.json" "$up_devcontainer"
+
+  BUMPED=()
+  SKIPPED_UPSTREAM_ONLY=()
+  SKIPPED_LOCAL_ONLY=()
+
+  transplant_dockerfile_pins "$DOCKERFILE" "$up_dockerfile"
+  transplant_base_digest "$DOCKERFILE" "$up_dockerfile"
+  transplant_devcontainer_json_pins "$DEVCONTAINER_JSON" "$up_devcontainer"
+
+  echo
+  info "bumped ${#BUMPED[@]} pin(s), skipped ${#SKIPPED_UPSTREAM_ONLY[@]} upstream-only, ${#SKIPPED_LOCAL_ONLY[@]} local-only"
+  local b
+  for b in ${BUMPED[@]+"${BUMPED[@]}"}; do
+    info "  bumped: $b"
+  done
+  for b in ${SKIPPED_UPSTREAM_ONLY[@]+"${SKIPPED_UPSTREAM_ONLY[@]}"}; do
+    info "  skipped (upstream-only, run --full to adopt): $b"
+  done
+  for b in ${SKIPPED_LOCAL_ONLY[@]+"${SKIPPED_LOCAL_ONLY[@]}"}; do
+    info "  skipped (local-only, no matching upstream key): $b"
+  done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# --full mode: re-run install.sh, overwriting .devcontainer/ wholesale
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Dockerfile ARG name → --language/--tool token. Must cover every ARG
 # install.sh can flip, or a round-trip through update.sh silently drops that
@@ -95,40 +286,48 @@ arg_token() {
   esac
 }
 
-LANGS=()
-TOOLS=()
-while IFS= read -r arg_name; do
-  [ -z "$arg_name" ] && continue
-  # CLAUDECODE defaults to true and isn't a --language/--tool selector.
-  [ "$arg_name" = "CLAUDECODE" ] && continue
-  token="$(arg_token "$arg_name")" || continue
-  case "$arg_name" in
-    PYTHON|GOLANG|NODEJS|DOTNET) LANGS+=("$token") ;;
-    *)                           TOOLS+=("$token") ;;
-  esac
-# NB: extract NAME from each `ARG NAME=true` line with sed, not a PCRE
-# lookbehind/lookahead — the -P flag is a GNU extension the BSD grep on macOS
-# (where this script commonly runs) does not support.
-done < <(sed -n -E 's/^ARG ([A-Z_]+)=true[[:space:]]*$/\1/p' "$DOCKERFILE")
+run_full() {
+  LANGS=()
+  TOOLS=()
+  while IFS= read -r arg_name; do
+    [ -z "$arg_name" ] && continue
+    # CLAUDECODE defaults to true and isn't a --language/--tool selector.
+    [ "$arg_name" = "CLAUDECODE" ] && continue
+    token="$(arg_token "$arg_name")" || continue
+    case "$arg_name" in
+      PYTHON|GOLANG|NODEJS|DOTNET) LANGS+=("$token") ;;
+      *)                           TOOLS+=("$token") ;;
+    esac
+  # NB: extract NAME from each `ARG NAME=true` line with sed, not a PCRE
+  # lookbehind/lookahead — the -P flag is a GNU extension the BSD grep on
+  # macOS (where this script commonly runs) does not support.
+  done < <(sed -n -E 's/^ARG ([A-Z_]+)=true[[:space:]]*$/\1/p' "$DOCKERFILE")
 
-ARGS=(--target "$REPO_ROOT")
-[ ${#LANGS[@]} -gt 0 ] && ARGS+=(--language "$(IFS=,; echo "${LANGS[*]}")")
-[ ${#TOOLS[@]} -gt 0 ] && ARGS+=(--tool "$(IFS=,; echo "${TOOLS[*]}")")
+  ARGS=(--target "$REPO_ROOT" --repo "$REPO")
+  [ ${#LANGS[@]} -gt 0 ] && ARGS+=(--language "$(IFS=,; echo "${LANGS[*]}")")
+  [ ${#TOOLS[@]} -gt 0 ] && ARGS+=(--tool "$(IFS=,; echo "${TOOLS[*]}")")
 
-[ -d "$REPO_ROOT/.claude/skills" ] && ARGS+=(--skills)
+  [ -d "$REPO_ROOT/.claude/skills" ] && ARGS+=(--skills)
 
-if [ -f "$DEVCONTAINER_JSON" ] && command -v jq >/dev/null 2>&1 \
-   && [ "$(jq -r '((.customizations.vscode.extensions // []) | length > 0)' "$DEVCONTAINER_JSON" 2>/dev/null)" = "true" ]; then
-  ARGS+=(--extensions)
+  if [ -f "$DEVCONTAINER_JSON" ] && command -v jq >/dev/null 2>&1 \
+     && [ "$(jq -r '((.customizations.vscode.extensions // []) | length > 0)' "$DEVCONTAINER_JSON" 2>/dev/null)" = "true" ]; then
+    ARGS+=(--extensions)
+  fi
+
+  # Guard the expansion: under `set -u`, macOS's bash 3.2 errors on "${arr[@]}"
+  # when the array is empty (no `-- <args>` were passed). The ${arr[@]+...}
+  # form expands to nothing when empty.
+  ARGS+=(${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
+
+  info "Detected languages: ${LANGS[*]:-none}"
+  info "Detected tools: ${TOOLS[*]:-none}"
+  info "Re-running install.sh from $REPO@$REF ..."
+
+  curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"
+}
+
+if [ "$FULL" = true ]; then
+  run_full
+else
+  run_surgical
 fi
-
-# Guard the expansion: under `set -u`, macOS's bash 3.2 errors on "${arr[@]}"
-# when the array is empty (no `-- <args>` were passed). The ${arr[@]+...} form
-# expands to nothing when empty.
-ARGS+=(${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"})
-
-info "Detected languages: ${LANGS[*]:-none}"
-info "Detected tools: ${TOOLS[*]:-none}"
-info "Re-running install.sh from lootem/devcontainer@$REF ..."
-
-curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"
