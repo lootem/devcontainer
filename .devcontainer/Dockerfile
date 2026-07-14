@@ -207,6 +207,7 @@ RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     | grep -A1 "pub" | tail -1 | tr -d ' ') && \
     EXPECTED="FB5DB77FD5C118B80511ADA8A6310ACC4672475C" && \
     [ "$ACTUAL" = "$EXPECTED" ] && \
+    echo "${EXPECTED}:6:" | gpg --import-ownertrust && \
     gpg --verify /tmp/awscliv2.sig /tmp/awscliv2.zip && \
     unzip -q /tmp/awscliv2.zip -d /tmp && \
     /tmp/aws/install && \
