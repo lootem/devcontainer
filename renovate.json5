@@ -12,9 +12,19 @@
 
   // Auto-merge once the build check passes (see build.yml). Timing is owned
   // by the workflow cron, not an in-config schedule.
+  //
+  // platformAutomerge is intentionally FALSE: Renovate merges the PR itself
+  // (via RENOVATE_TOKEN, which has Contents: write) and its own merge logic
+  // enforces minimumReleaseAge internally. Delegating to GitHub's native
+  // auto-merge (true) would only honour the 7-day gate if
+  // `renovate/stability-days` were a REQUIRED status check on main — but a
+  // required check that only Renovate ever posts deadlocks every human
+  // dev->main PR ("waiting for status to be reported"), since required checks
+  // can't be scoped to a source branch. Self-merge keeps the gate without
+  // that required check.
   automerge: true,
   automergeType: 'pr',
-  platformAutomerge: true,
+  platformAutomerge: false,
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`
   // comments. The base-image digest is bumped by base-image-digest.yml
