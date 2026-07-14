@@ -31,7 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS_DIR="$REPO_ROOT/skills"
 
 # renovate: datasource=git-refs depName=https://github.com/mattpocock/skills
-REF="c6b033e93abc32d7a7a9b8629d21d129e2327818"
+REF="66898f60e8c744e269f8ce06c2b2b99ce7660d5f"
 REPO="mattpocock/skills"
 
 die()  { echo "Error: $*" >&2; exit 1; }
