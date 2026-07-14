@@ -14,12 +14,7 @@
   // by the workflow cron, not an in-config schedule.
   automerge: true,
   automergeType: 'pr',
-  // DIAGNOSTIC (temporary): platformAutomerge disabled to test whether GitHub's
-  // native auto-merge delegation is what trips the spurious "Repository has
-  // changed during renovation - aborting" (Error B). Renovate-side automerge
-  // still applies. Restore to `true` once diagnosed — see
-  // .handoffs/12-renovate-spurious-abort.md.
-  platformAutomerge: false,
+  platformAutomerge: true,
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`
   // comments. The base-image digest is bumped by base-image-digest.yml
@@ -73,7 +68,10 @@
         '"(?<depName>[\\w-]+\\.[\\w-]+)@(?<currentValue>[0-9][^"]*)"',
       ],
       datasourceTemplate: 'custom.openvsx',
-      packageNameTemplate: '{{replace depName "." "/"}}',
+      // Renovate's `replace` helper is {{replace find replacement value}}; the
+      // find arg is a regex, so the dot is escaped to stay literal. Maps an
+      // extension id "publisher.name" to the OpenVSX API path "publisher/name".
+      packageNameTemplate: '{{replace "\\." "/" depName}}',
     },
   ],
   // OpenVSX has no native Renovate datasource (renovatebot/renovate#31388), so
