@@ -7,8 +7,9 @@
 #
 # Default (surgical): bumps only the pinned versions this repo already tracks
 # (Renovate-annotated ARGs, the base image digest, devcontainer.json extension
-# pins) in place, leaving everything else — local edits, toggle ARGs, layer
-# structure — untouched. Upstream files are only ever parsed, never executed.
+# pins, signing keys/fingerprints) in place, leaving everything else — local
+# edits, toggle ARGs, layer structure — untouched. Upstream files are only
+# ever parsed, never executed.
 #
 #   .devcontainer/update.sh                      # bump pins from lootem/devcontainer@main
 #   .devcontainer/update.sh --ref <sha>          # pin to a specific commit
@@ -43,9 +44,10 @@ Usage: update.sh [--full] [--repo <owner/repo>] [--ref <ref>] [-- <extra install
 Default (surgical): fetches upstream's .devcontainer/Dockerfile +
 devcontainer.json (parse-only) and bumps in place every pinned version this
 repo already tracks — Renovate-annotated ARGs, the base image @sha256: digest,
-and devcontainer.json extension @version pins — for keys present both locally
-and upstream. Everything else (toggle ARGs, comments, local edits) is left
-alone. Prints a summary of what bumped and what was skipped.
+devcontainer.json extension @version pins, and signing keys/fingerprints
+(awscli.pub, MS_KEY_FP*, inline EXPECTED= fingerprints) — for keys present
+both locally and upstream. Everything else (toggle ARGs, comments, local
+edits) is left alone. Prints a summary of what bumped and what was skipped.
 
       --full        Re-run install.sh and overwrite .devcontainer/ wholesale
                      (today's behavior) instead of the surgical transplant.
@@ -204,6 +206,101 @@ transplant_base_digest() { # transplant_base_digest <local> <upstream>
   BUMPED+=("base image digest: $ldigest -> $udigest")
 }
 
+# Byte-for-byte replace $1 (mutated in place) with $2 if they differ. Used for
+# security-critical files (awscli.pub) that aren't line-oriented pins — the
+# upstream copy is only ever fetched parse-only (never imported/executed) by
+# this script; the Dockerfile's own gpg fingerprint check is the real gate.
+transplant_file_verbatim() { # transplant_file_verbatim <local> <upstream> <label>
+  local local_file="$1" upstream_file="$2" label="$3"
+  if [ ! -f "$upstream_file" ]; then
+    [ -f "$local_file" ] && SKIPPED_LOCAL_ONLY+=("$label (no matching upstream file)")
+    return
+  fi
+  if [ ! -f "$local_file" ]; then
+    SKIPPED_UPSTREAM_ONLY+=("$label")
+    return
+  fi
+  if cmp -s "$local_file" "$upstream_file"; then
+    return
+  fi
+  cp "$upstream_file" "$local_file"
+  BUMPED+=("$label (replaced with upstream)")
+}
+
+# Like transplant_dockerfile_pins, but for an ARG with no `# renovate:` anchor
+# (e.g. MS_KEY_FP*) — matched directly on `^ARG NAME=`. Do NOT add a
+# `# renovate:` comment to such an ARG just to reuse the other helper: Renovate
+# would then try to "update" a fingerprint it has no datasource for.
+transplant_named_arg() { # transplant_named_arg <local_df> <upstream_df> <ARG_NAME>
+  local local_df="$1" upstream_df="$2" name="$3" lval uval
+  lval="$(arg_value "$local_df" "$name")"
+  uval="$(arg_value "$upstream_df" "$name")"
+  if [ -z "$uval" ]; then
+    [ -n "$lval" ] && SKIPPED_LOCAL_ONLY+=("ARG $name")
+    return
+  fi
+  if [ -z "$lval" ]; then
+    SKIPPED_UPSTREAM_ONLY+=("ARG $name")
+    return
+  fi
+  [ "$lval" = "$uval" ] && return
+  awk -v name="$name" -v newval="$uval" '
+    $0 ~ ("^ARG " name "=") { print "ARG " name "=" newval; next }
+    { print }
+  ' "$local_df" > "$local_df.tmp" && mv "$local_df.tmp" "$local_df"
+  BUMPED+=("ARG $name: $lval -> $uval")
+}
+
+# Find the line number of the `EXPECTED="..."` line inside the RUN block that
+# references <anchor> (a unique nearby token, e.g. "claude-code.asc" or
+# "awscli.pub") — a RUN instruction is a `^RUN ` line plus every following
+# line ending in a line-continuation backslash. Scoping to the block (rather
+# than a bare EXPECTED= match) is what keeps the claude-code and awscli
+# fingerprints from cross-contaminating when both live in the same Dockerfile.
+expected_line_no() { # expected_line_no <dockerfile> <anchor> -> line number, or empty if not found
+  awk -v anchor="$2" '
+    /^RUN / { in_block=1; has_anchor=0; exp_line=0 }
+    in_block {
+      if (index($0, anchor) > 0) has_anchor=1
+      if ($0 ~ /^[[:space:]]*EXPECTED="/) exp_line=NR
+      if ($0 !~ /\\$/) {
+        if (has_anchor && exp_line) { print exp_line; exit }
+        in_block=0
+      }
+    }
+  ' "$1"
+}
+
+expected_value() { # expected_value <dockerfile> <line-no> -> value at that line (empty if absent)
+  [ -z "$2" ] && return
+  sed -n "${2}p" "$1" | sed -n -E 's/^[[:space:]]*EXPECTED="([^"]*)".*$/\1/p'
+}
+
+# Transplant the inline `EXPECTED="…"` fingerprint scoped to the RUN block
+# that references <anchor>, for the given upstream/local Dockerfiles.
+transplant_expected() { # transplant_expected <local_df> <upstream_df> <anchor> <label>
+  local local_df="$1" upstream_df="$2" anchor="$3" label="$4"
+  local lline uline lval uval
+  lline="$(expected_line_no "$local_df" "$anchor")"
+  uline="$(expected_line_no "$upstream_df" "$anchor")"
+  lval="$(expected_value "$local_df" "$lline")"
+  uval="$(expected_value "$upstream_df" "$uline")"
+  if [ -z "$uval" ]; then
+    [ -n "$lval" ] && SKIPPED_LOCAL_ONLY+=("EXPECTED ($label)")
+    return
+  fi
+  if [ -z "$lval" ]; then
+    SKIPPED_UPSTREAM_ONLY+=("EXPECTED ($label)")
+    return
+  fi
+  [ "$lval" = "$uval" ] && return
+  awk -v n="$lline" -v newval="$uval" '
+    NR == n { sub(/EXPECTED="[^"]*"/, "EXPECTED=\"" newval "\"") }
+    { print }
+  ' "$local_df" > "$local_df.tmp" && mv "$local_df.tmp" "$local_df"
+  BUMPED+=("EXPECTED ($label): $lval -> $uval")
+}
+
 # All upstream "publisher.name@version" extension pins this repo could ever
 # carry: the base devcontainer.json's pins, plus each *currently enabled*
 # language's templates/<lang>/extensions.json — install.sh merges the latter
@@ -277,13 +374,15 @@ detect_enabled_langs() { # detect_enabled_langs <dockerfile> -> tokens, one per 
 run_surgical() {
   info "Surgical mode: transplanting pinned versions from $REPO@$REF (parse-only, never executed)"
 
-  local up_dockerfile up_devcontainer
+  local up_dockerfile up_devcontainer up_awscli_pub
   up_dockerfile="$(mktemp)"
   up_devcontainer="$(mktemp)"
-  trap 'rm -f "$up_dockerfile" "$up_devcontainer"' RETURN
+  up_awscli_pub="$(mktemp)"
+  trap 'rm -f "$up_dockerfile" "$up_devcontainer" "$up_awscli_pub"' RETURN
 
   fetch_upstream ".devcontainer/Dockerfile" "$up_dockerfile"
   fetch_upstream ".devcontainer/devcontainer.json" "$up_devcontainer"
+  fetch_upstream_optional ".devcontainer/awscli.pub" "$up_awscli_pub" || true
 
   local enabled_langs upstream_ext_pins
   enabled_langs="$(detect_enabled_langs "$DOCKERFILE")"
@@ -296,6 +395,11 @@ run_surgical() {
   transplant_dockerfile_pins "$DOCKERFILE" "$up_dockerfile"
   transplant_base_digest "$DOCKERFILE" "$up_dockerfile"
   transplant_devcontainer_json_pins "$DEVCONTAINER_JSON" "$upstream_ext_pins"
+  transplant_named_arg "$DOCKERFILE" "$up_dockerfile" "MS_KEY_FP"
+  transplant_named_arg "$DOCKERFILE" "$up_dockerfile" "MS_KEY_FP_2025"
+  transplant_expected "$DOCKERFILE" "$up_dockerfile" "claude-code.asc" "claude-code"
+  transplant_expected "$DOCKERFILE" "$up_dockerfile" "awscli.pub" "awscli"
+  transplant_file_verbatim "$REPO_ROOT/.devcontainer/awscli.pub" "$up_awscli_pub" "awscli.pub"
 
   echo
   info "bumped ${#BUMPED[@]} pin(s), skipped ${#SKIPPED_UPSTREAM_ONLY[@]} upstream-only, ${#SKIPPED_LOCAL_ONLY[@]} local-only"
