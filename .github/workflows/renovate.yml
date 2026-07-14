@@ -15,8 +15,3 @@ jobs:
         with:
           configurationFile: .github/renovate-global.json5
           token: ${{ secrets.RENOVATE_TOKEN }}
-        # DIAGNOSTIC (temporary): capture the base-SHA comparison behind the
-        # spurious "Repository has changed during renovation - aborting". Revert
-        # once Error B is diagnosed. See .handoffs/12-renovate-spurious-abort.md.
-        env:
-          LOG_LEVEL: debug
