@@ -519,6 +519,56 @@ test_update_script_surgical_skip_summary() {
   assert_contains <(printf '%s' "$out") "skipped (upstream-only, run --full to adopt): ARG TOTALLY_NEW_VER"
 }
 
+test_update_script_surgical_transplants_keys() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --tool awscli --force
+
+  # Fixture "upstream": bump MS_KEY_FP*, both inline EXPECTED= fingerprints,
+  # and awscli.pub's contents.
+  local up; up="$(new_dir)"
+  mkdir -p "$up/.devcontainer"
+  cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
+  cp "$REPO_ROOT/.devcontainer/awscli.pub" "$up/.devcontainer/awscli.pub"
+  sed -i 's/ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF/ARG MS_KEY_FP=DEADBEEF0000000000000000000000000000000A/' \
+    "$up/.devcontainer/Dockerfile"
+  sed -i 's/ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B/ARG MS_KEY_FP_2025=DEADBEEF0000000000000000000000000000000B/' \
+    "$up/.devcontainer/Dockerfile"
+  sed -i 's/EXPECTED="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"/EXPECTED="1111111111111111111111111111111111111C"/' \
+    "$up/.devcontainer/Dockerfile"
+  sed -i 's/EXPECTED="FB5DB77FD5C118B80511ADA8A6310ACC4672475C"/EXPECTED="2222222222222222222222222222222222222D"/' \
+    "$up/.devcontainer/Dockerfile"
+  echo "# upstream-added trailer" >> "$up/.devcontainer/awscli.pub"
+
+  local patched_update
+  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical_keys.log 2>&1; then
+    echo "surgical update.sh (key transplant) failed (see /tmp/test.sh.surgical_keys.log):"
+    cat /tmp/test.sh.surgical_keys.log
+    fail "surgical update.sh (key transplant) ran successfully"
+    return
+  fi
+  ok "surgical update.sh (key transplant) ran successfully"
+
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG MS_KEY_FP=DEADBEEF0000000000000000000000000000000A'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG MS_KEY_FP_2025=DEADBEEF0000000000000000000000000000000B'
+  assert_contains "$d/.devcontainer/Dockerfile" 'EXPECTED="1111111111111111111111111111111111111C"'
+  assert_contains "$d/.devcontainer/Dockerfile" 'EXPECTED="2222222222222222222222222222222222222D"'
+  assert_contains "$d/.devcontainer/awscli.pub" '# upstream-added trailer'
+
+  # No cross-contamination: each new EXPECTED value appears exactly once (a
+  # file-wide, unscoped replace would have let one clobber the other).
+  local n
+  n="$(grep -c 'EXPECTED="1111111111111111111111111111111111111C"' "$d/.devcontainer/Dockerfile")"
+  assert_eq "$n" "1" "claude-code EXPECTED bumped exactly once"
+  n="$(grep -c 'EXPECTED="2222222222222222222222222222222222222D"' "$d/.devcontainer/Dockerfile")"
+  assert_eq "$n" "1" "awscli EXPECTED bumped exactly once"
+
+  # Unrelated toggle ARGs survive untouched.
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
+}
+
 test_update_script_help_mentions_full_and_repo() {
   local out
   out="$(bash "$REPO_ROOT/.devcontainer/update.sh" --help)"
@@ -994,6 +1044,7 @@ TESTS=(
   test_update_script_full_round_trip
   test_update_script_surgical_bumps_and_preserves_edits
   test_update_script_surgical_skip_summary
+  test_update_script_surgical_transplants_keys
   test_update_script_help_mentions_full_and_repo
   test_shellcheck
   test_renovate_regex_covers_pins
