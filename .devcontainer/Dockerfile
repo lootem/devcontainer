@@ -196,7 +196,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.35.16
+ARG AWS_VER=2.35.17
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
