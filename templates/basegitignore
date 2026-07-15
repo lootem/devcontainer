@@ -1,4 +1,6 @@
 .env
 .env.keys
 .env.keys.gpg
-.claude/
+.claude/*
+# Remove below to keep skills uncommitted
+!.claude/skills/

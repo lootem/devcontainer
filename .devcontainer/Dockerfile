@@ -54,6 +54,8 @@ ARG GOLANG=false
 ARG GO_VER=1.26.4
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
+# renovate: datasource=go depName=github.com/go-delve/delve
+ARG DLV_VER=1.27.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$GOLANG" = "true" ]; then \
@@ -64,7 +66,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     fi
 USER vscode
 RUN if [ "$GOLANG" = "true" ]; then \
-    /usr/local/go/bin/go install golang.org/x/tools/gopls@v${GOPLS_VER}; \
+    /usr/local/go/bin/go install golang.org/x/tools/gopls@v${GOPLS_VER} && \
+    /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@v${DLV_VER}; \
     fi
 USER root
 # -- End Go
