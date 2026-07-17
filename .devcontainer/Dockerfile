@@ -51,7 +51,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_VER=1.26.4
+ARG GO_VER=1.26.5
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 # renovate: datasource=go depName=github.com/go-delve/delve
