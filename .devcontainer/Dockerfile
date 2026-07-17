@@ -24,7 +24,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Claude Code
 ARG CLAUDECODE=true
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.205
+ARG CLAUDE_VER=2.1.206
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
