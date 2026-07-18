@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
 # claude.sh
-# Usage: ./claude.sh [bedrock|foundry|api]
+# Usage: ./claude.sh            → auth mode is inferred from the environment
 #        ./claude.sh keys init|edit
-#        No argument → runs with default CLI params only.
+#
+# The auth backend is no longer passed as an argument. It is inferred from the
+# environment variables that are already set (in your shell or in $ENV_FILE):
+#   bedrock  ← CLAUDE_CODE_USE_BEDROCK / AWS_REGION / AWS_PROFILE /
+#              AWS_BEARER_TOKEN_BEDROCK / AWS_ACCESS_KEY_ID
+#   foundry  ← CLAUDE_CODE_USE_FOUNDRY / ANTHROPIC_FOUNDRY_RESOURCE /
+#              ANTHROPIC_FOUNDRY_API_KEY
+#   api      ← fallback when no bedrock/foundry markers are set but a keys file
+#              ($KEYS_GPG) exists (its ANTHROPIC_API_KEY is verified on decrypt)
+#   default  ← nothing set and no keys file → no auth override
+#
+# If several modes' markers are set at once, you're prompted to choose (or, with
+# no TTY, the script dies). Set CLAUDE_AUTH_MODE=bedrock|foundry|api to force a
+# mode outright, bypassing inference and any prompt (use this in CI).
+#
+# Note: only *non-secret* markers in $ENV_FILE (e.g. AWS_REGION) are visible to
+# inference — secrets living inside the encrypted keys file are not. If a
+# bedrock/foundry setup keeps its only distinguishing marker inside the keys
+# file, inference can't see it; select the mode with CLAUDE_AUTH_MODE.
 
 set -euo pipefail
 
@@ -36,6 +54,14 @@ load_env_file() {
   set +a
 }
 
+# Like load_env_file, but a no-op when the file is missing. Used to expose
+# $ENV_FILE's plaintext markers to mode inference without forcing every setup
+# (e.g. default or api-only) to have an .env.
+load_env_file_soft() {
+  [[ -f "$ENV_FILE" ]] && load_env_file "$ENV_FILE"
+  return 0
+}
+
 # ─── TTY-aware prompt ─────────────────────────────────────────────────────────
 # Prompts read from /dev/tty (like install.sh's ask()) so piping something into
 # claude.sh's own stdin can't be hijacked into answering a secret prompt; when
@@ -55,6 +81,27 @@ read_secret() { # read_secret <prompt> -> prints the entered value
     read -r val
   fi
   printf '%s' "$val"
+}
+
+# choose_mode <mode>... -> prints the chosen mode on stdout
+# Presents a numbered menu of the candidate modes and reads the choice from the
+# controlling terminal (mirroring read_secret's /dev/tty preference). With no
+# TTY the choice can't be made safely, so it dies and points at CLAUDE_AUTH_MODE.
+choose_mode() {
+  local modes=("$@") n=$# i reply
+  if [[ "$HAVE_TTY" != true ]]; then
+    die "Ambiguous auth mode; markers for multiple modes are set (${modes[*]}). Set CLAUDE_AUTH_MODE to one of them."
+  fi
+  {
+    echo "Multiple auth modes detected. Choose one:"
+    for i in "${!modes[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${modes[$i]}"; done
+  } >&2
+  while :; do
+    read -r -p "Selection [1-${n}]: " reply < /dev/tty
+    [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= n )) && break
+    echo "Invalid selection." >&2
+  done
+  printf '%s' "${modes[$((reply - 1))]}"
 }
 
 # Reads KEY=VALUE lines until a blank line/EOF. A key with no value (`KEY=`)
@@ -222,8 +269,45 @@ if [[ "${1:-}" == "keys" ]]; then
   esac
 fi
 
-# ─── Auth mode ────────────────────────────────────────────────────────────────
-AUTH_MODE="${1:-}"
+# ─── Auth mode selection ──────────────────────────────────────────────────────
+# Priority: explicit CLAUDE_AUTH_MODE override > inference from markers > api
+# fallback (keys file exists) > default (nothing set).
+if [[ -n "${CLAUDE_AUTH_MODE:-}" ]]; then
+  case "$CLAUDE_AUTH_MODE" in
+    bedrock|foundry|api) AUTH_MODE="$CLAUDE_AUTH_MODE" ;;
+    *) die "Invalid CLAUDE_AUTH_MODE='${CLAUDE_AUTH_MODE}' (expected bedrock|foundry|api)." ;;
+  esac
+  info "Auth mode: ${AUTH_MODE} (forced via CLAUDE_AUTH_MODE)"
+else
+  # Expose $ENV_FILE's plaintext markers to inference (secrets in $KEYS_GPG are
+  # intentionally not decrypted here — see the header note).
+  load_env_file_soft
+
+  CANDIDATES=()
+  if [[ -n "${CLAUDE_CODE_USE_BEDROCK:-}${AWS_REGION:-}${AWS_PROFILE:-}${AWS_BEARER_TOKEN_BEDROCK:-}${AWS_ACCESS_KEY_ID:-}" ]]; then
+    CANDIDATES+=("bedrock")
+  fi
+  if [[ -n "${CLAUDE_CODE_USE_FOUNDRY:-}${ANTHROPIC_FOUNDRY_RESOURCE:-}${ANTHROPIC_FOUNDRY_API_KEY:-}" ]]; then
+    CANDIDATES+=("foundry")
+  fi
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    CANDIDATES+=("api")
+  fi
+
+  if (( ${#CANDIDATES[@]} > 1 )); then
+    AUTH_MODE="$(choose_mode "${CANDIDATES[@]}")"
+    info "Auth mode: ${AUTH_MODE} (selected from ${CANDIDATES[*]})"
+  elif (( ${#CANDIDATES[@]} == 1 )); then
+    AUTH_MODE="${CANDIDATES[0]}"
+    info "Auth mode: ${AUTH_MODE} (inferred)"
+  elif [[ -f "$KEYS_GPG" ]]; then
+    AUTH_MODE="api"
+    info "Auth mode: api (inferred from ${KEYS_GPG})"
+  else
+    AUTH_MODE=""
+    info "Auth mode: default (no markers set, no keys file)"
+  fi
+fi
 
 case "$AUTH_MODE" in
 
@@ -291,8 +375,7 @@ case "$AUTH_MODE" in
     ;;
 
   *)
-    echo "Usage: $0 [bedrock|foundry|api]" >&2
-    exit 1
+    die "Internal error: unexpected auth mode '${AUTH_MODE}'."
     ;;
 
 esac
