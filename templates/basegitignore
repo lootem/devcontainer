@@ -8,3 +8,4 @@
 .agents/*
 # Remove below to keep skills uncommitted
 !.agents/skills/
+.DS_Store
