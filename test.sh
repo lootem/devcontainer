@@ -136,8 +136,12 @@ make_local_update() { # make_local_update <path-to-update.sh> -> patches it in p
     || { echo "test.sh: update.sh's curl line has changed — update UPDATE_CURL_LINE in test.sh" >&2; exit 1; }
   # Patched in place (not copied elsewhere): update.sh locates its own repo
   # root via its own path (BASH_SOURCE), so it must stay under .devcontainer/.
+  # Compare on the whitespace-trimmed line: the curl call is indented inside
+  # run_full(), so an exact "$0 == old" would never match and the test would
+  # silently fall through to the *live* published install.sh over the network.
   awk -v old="$UPDATE_CURL_LINE" -v install="$INSTALL" '
-    $0 == old { print "bash \"" install "\" \"${ARGS[@]}\""; next }
+    { line=$0; sub(/^[[:space:]]+/,"",line) }
+    line == old { print "  bash \"" install "\" \"${ARGS[@]}\""; next }
     { print }
   ' "$src" > "$src.tmp"
   mv "$src.tmp" "$src"
@@ -239,6 +243,7 @@ assert_eq() { # assert_eq <actual> <expected> <description>
 test_syntax() {
   bash -n "$REPO_ROOT/install.sh" && ok "install.sh parses" || fail "install.sh syntax error"
   bash -n "$REPO_ROOT/claude.sh" && ok "claude.sh parses" || fail "claude.sh syntax error"
+  bash -n "$REPO_ROOT/codex.sh" && ok "codex.sh parses" || fail "codex.sh syntax error"
 }
 
 test_fresh_scaffold() {
@@ -445,6 +450,8 @@ test_update_script_full_round_trip() {
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
+  # The default claude CLI selection must survive the ARG->--cli round-trip.
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
 }
 
 test_update_script_surgical_bumps_and_preserves_edits() {
@@ -583,6 +590,26 @@ test_verbatim_extras() {
   assert_file_exists "$d/pnpm-workspace.yaml"
 }
 
+test_generated_compose_has_no_build_args() {
+  # Generated projects bake their CLI choice into the copied Dockerfile's ARG
+  # defaults, so the shipped docker-compose.yml must carry NO build args — else
+  # maintainer args (CLAUDECODE/CODEX) would leak in and force both CLIs on.
+  local d; d="$(new_dir)"
+  run_install "$d" --cli codex --language go --force
+  assert_file_exists "$d/.devcontainer/docker-compose.yml"
+  if grep -qE '^\s*args:' "$d/.devcontainer/docker-compose.yml"; then
+    fail "generated docker-compose.yml unexpectedly carries build args"
+  else
+    ok "generated docker-compose.yml has no build args"
+  fi
+  # Codex-only selection must not have been overridden by leaked CLAUDECODE args.
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+
+  # The repo's own compose SHOULD equip the maintainer container with both CLIs.
+  assert_contains "$REPO_ROOT/.devcontainer/docker-compose.yml" 'CLAUDECODE: "true"'
+  assert_contains "$REPO_ROOT/.devcontainer/docker-compose.yml" 'CODEX: "true"'
+}
+
 test_gitignore_secrets() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -698,6 +725,86 @@ EOF
   assert_contains /tmp/test.sh.api_mode.log "ANTHROPIC_API_KEY=sk-test-xyz"
 }
 
+test_codex_installed_and_executable() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli codex --language go --force
+  assert_file_exists "$d/codex.sh"
+  [ -x "$d/codex.sh" ] && ok "installed codex.sh is executable" || fail "installed codex.sh is not executable"
+}
+
+test_cli_default_installs_claude() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force   # no --cli -> claude default
+  assert_file_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+}
+
+test_cli_codex_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli codex --language go --skills --force
+  assert_file_exists "$d/codex.sh"
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
+  assert_file_not_exists "$d/.claude/skills/code-review/SKILL.md"
+  # Vendor-only maintainer script must not leak into the copied skills dir.
+  assert_file_not_exists "$d/.agents/skills/vendor-matt-pocock-skills.sh"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+}
+
+test_cli_both_skills_both_dirs() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli claude,codex --language go --skills --force
+  assert_file_exists "$d/claude.sh"
+  assert_file_exists "$d/codex.sh"
+  assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
+  assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
+}
+
+test_cli_unknown_rejected() {
+  local d; d="$(new_dir)"
+  if run_install "$d" --cli bogus --language go --force; then
+    fail "install.sh should reject an unknown --cli"
+  else
+    ok "install.sh rejects an unknown --cli"
+  fi
+}
+
+test_cli_codex_not_a_tool() {
+  local d; d="$(new_dir)"
+  # codex moved from --tool to --cli; --tool codex must now be rejected.
+  if run_install "$d" --tool codex --language go --force; then
+    fail "install.sh should no longer accept 'codex' as a --tool"
+  else
+    ok "install.sh rejects 'codex' as a --tool (moved to --cli)"
+  fi
+}
+
+test_codex_api_mode_decrypts_keys() {
+  local d; d="$(new_dir)"
+  cp "$REPO_ROOT/codex.sh" "$d/codex.sh"
+  chmod +x "$d/codex.sh"
+  mkdir -p "$d/bin"
+  # Stub codex: echo the resolved key so we can confirm it was decrypted+exported.
+  cat > "$d/bin/codex" <<'EOF'
+#!/usr/bin/env bash
+echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+EOF
+  chmod +x "$d/bin/codex"
+  echo "OPENAI_API_KEY=sk-codex-xyz" > "$d/.env"
+  ( cd "$d" && printf '\ntestpass\ntestpass\n' | ./codex.sh keys init ) >/dev/null 2>&1
+
+  # No plaintext markers left in .env (migrated out) + a keys file present ->
+  # api fallback should decrypt OPENAI_API_KEY and hand it to codex.
+  ( cd "$d" && printf 'testpass\n' | PATH="$d/bin:$PATH" ./codex.sh ) \
+    >/tmp/test.sh.codex_api_mode.log 2>&1
+  assert_contains /tmp/test.sh.codex_api_mode.log "OPENAI_API_KEY=sk-codex-xyz"
+}
+
 test_renovate_regex_covers_pins() {
   local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
   local renovate="$REPO_ROOT/renovate.json5"
@@ -801,29 +908,28 @@ test_extensions_no_duplicate_canonical() {
 }
 
 test_token_set_matches_dockerfile_args() {
-  # install.sh's --language/--tool tokens must cover every ARG the Dockerfile
-  # can toggle 1:1, or update.sh's ARG->token round-trip silently drops a
-  # feature (e.g. a hand-added CLI ARG with no corresponding flag).
+  # install.sh's --language/--tool/--cli tokens must cover every ARG the
+  # Dockerfile can toggle 1:1, or update.sh's ARG->token round-trip silently
+  # drops a feature (e.g. a hand-added CLI ARG with no corresponding flag).
   local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
   local install="$REPO_ROOT/install.sh"
 
-  # Toggleable feature ARGs (default false). CLAUDECODE defaults true and
-  # isn't a --language/--tool selector.
+  # Toggleable feature ARGs (all default false, including the AI CLIs).
   local dockerfile_args
   dockerfile_args="$(grep -oP '(?<=^ARG )[A-Z_]+(?==false)' "$dockerfile" | sort -u)"
 
-  # ARGs install.sh's lang_arg()/tool_arg() can produce.
+  # ARGs install.sh's lang_arg()/tool_arg()/cli_arg() can produce.
   local mapped_args
-  mapped_args="$(sed -n '/^lang_arg()/,/^}/p; /^tool_arg()/,/^}/p' "$install" \
+  mapped_args="$(sed -n '/^lang_arg()/,/^}/p; /^tool_arg()/,/^}/p; /^cli_arg()/,/^}/p' "$install" \
     | grep -oP '(?<=echo ")[A-Z_]+(?=")' | sort -u)"
 
   local missing=0
   while IFS= read -r a; do
     [ -z "$a" ] && continue
     if echo "$mapped_args" | grep -qxF "$a"; then
-      ok "install.sh has a --language/--tool token for Dockerfile ARG $a"
+      ok "install.sh has a --language/--tool/--cli token for Dockerfile ARG $a"
     else
-      fail "Dockerfile ARG $a has no --language/--tool token (update.sh round-trip would drop it)"
+      fail "Dockerfile ARG $a has no --language/--tool/--cli token (update.sh round-trip would drop it)"
       missing=$((missing+1))
     fi
   done <<< "$dockerfile_args"
@@ -834,7 +940,7 @@ test_token_set_matches_dockerfile_args() {
       || { fail "install.sh maps a token to ARG $a, but the Dockerfile has no 'ARG $a=false'"; missing=$((missing+1)); }
   done <<< "$mapped_args"
 
-  [ "$missing" -eq 0 ] && ok "--language/--tool token set exactly matches flippable Dockerfile ARGs"
+  [ "$missing" -eq 0 ] && ok "--language/--tool/--cli token set exactly matches flippable Dockerfile ARGs"
 }
 
 test_ask_yn_all_sticks_across_subshell() {
@@ -903,7 +1009,7 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/codex.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -922,7 +1028,7 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/codex.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
@@ -1023,6 +1129,7 @@ TESTS=(
   test_vendor_script_help
   test_vendor_script_end_to_end
   test_verbatim_extras
+  test_generated_compose_has_no_build_args
   test_extensions_default_off
   test_extensions_opt_in
   test_extensions_no_duplicate_canonical
@@ -1040,6 +1147,13 @@ TESTS=(
   test_keys_init_no_plaintext_on_gpg_failure
   test_keys_edit_no_plaintext_on_gpg_failure
   test_api_mode_decrypts_keys
+  test_codex_installed_and_executable
+  test_codex_api_mode_decrypts_keys
+  test_cli_default_installs_claude
+  test_cli_codex_only
+  test_cli_both_skills_both_dirs
+  test_cli_unknown_rejected
+  test_cli_codex_not_a_tool
   test_update_script_shipped_and_executable
   test_update_script_full_round_trip
   test_update_script_surgical_bumps_and_preserves_edits

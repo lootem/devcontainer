@@ -78,6 +78,8 @@ jobs:
           push: false
           platforms: ${{ matrix.platform }}
           build-args: |
+            CLAUDECODE=true
+            CODEX=true
             GOLANG=true
             PYTHON=true
             NODEJS=true
@@ -128,6 +130,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=lootemsec/devcontainer,push-by-digest=true,name-canonical=true,push=true
           build-args: |
+            CLAUDECODE=true
+            CODEX=true
             GOLANG=true
             PYTHON=true
             NODEJS=true

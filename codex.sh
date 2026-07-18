@@ -1,36 +1,42 @@
 #!/usr/bin/env bash
-# claude.sh
-# Usage: ./claude.sh            → auth mode is inferred from the environment
-#        ./claude.sh keys init|edit
+# codex.sh
+# Usage: ./codex.sh            → auth mode is inferred from the environment
+#        ./codex.sh keys init|edit
 #
-# The auth backend is no longer passed as an argument. It is inferred from the
+# Codex counterpart of claude.sh. The auth backend is inferred from the
 # environment variables that are already set (in your shell or in $ENV_FILE):
-#   bedrock  ← CLAUDE_CODE_USE_BEDROCK / AWS_REGION / AWS_PROFILE /
-#              AWS_BEARER_TOKEN_BEDROCK / AWS_ACCESS_KEY_ID
-#   foundry  ← CLAUDE_CODE_USE_FOUNDRY / ANTHROPIC_FOUNDRY_RESOURCE /
-#              ANTHROPIC_FOUNDRY_API_KEY
-#   api      ← fallback when no bedrock/foundry markers are set but a keys file
-#              ($KEYS_GPG) exists (its ANTHROPIC_API_KEY is verified on decrypt)
-#   default  ← nothing set and no keys file → no auth override
+#   azure    ← AZURE_OPENAI_API_KEY / AZURE_OPENAI_BASE_URL  (Azure OpenAI)
+#   api      ← fallback when no azure markers are set but a keys file
+#              ($KEYS_GPG) exists (its OPENAI_API_KEY is verified on decrypt);
+#              also picked directly if OPENAI_API_KEY is already exported
+#   default  ← nothing set and no keys file → ChatGPT sign-in (`codex login`)
+#
+# There is no Bedrock-equivalent mode: Codex targets OpenAI models, which aren't
+# served over AWS Bedrock. Azure OpenAI is the Foundry-equivalent cloud backend.
 #
 # If several modes' markers are set at once, you're prompted to choose (or, with
-# no TTY, the script dies). Set CLAUDE_AUTH_MODE=bedrock|foundry|api to force a
-# mode outright, bypassing inference and any prompt (use this in CI).
+# no TTY, the script dies). Set CODEX_AUTH_MODE=api|azure to force a mode
+# outright, bypassing inference and any prompt (use this in CI).
 #
-# Note: only *non-secret* markers in $ENV_FILE (e.g. AWS_REGION) are visible to
-# inference — secrets living inside the encrypted keys file are not. If a
-# bedrock/foundry setup keeps its only distinguishing marker inside the keys
-# file, inference can't see it; select the mode with CLAUDE_AUTH_MODE.
+# Note: only *non-secret* markers in $ENV_FILE (e.g. AZURE_OPENAI_BASE_URL) are
+# visible to inference — secrets living inside the encrypted keys file are not.
+# If an azure setup keeps its only distinguishing marker inside the keys file,
+# inference can't see it; select the mode with CODEX_AUTH_MODE.
 
 set -euo pipefail
 
 # ─── Default CLI params (edit freely) ────────────────────────────────────────
-CLAUDE_PARAMS=(
-  "--setting-sources" "project,local"
-  "--effort" "medium"
-  "--permission-mode" "auto"
-  # "--model" "claude-sonnet-5"
+# Equivalent of claude.sh's defaults: medium reasoning effort and an "auto"
+# permission posture (edit within the workspace, let the model ask to escalate).
+CODEX_PARAMS=(
+  "--sandbox" "workspace-write"
+  "--ask-for-approval" "on-request"
+  "-c" 'model_reasoning_effort="medium"'
+  # "-m" "gpt-5-codex"
 )
+
+# Azure OpenAI API version used when wiring the azure provider (override in $ENV_FILE).
+AZURE_OPENAI_API_VERSION="${AZURE_OPENAI_API_VERSION:-2025-04-01-preview}"
 
 # Path to your .env file (non-secret config only — see keys init/edit for secrets)
 ENV_FILE="${ENV_FILE:-.env}"
@@ -42,7 +48,7 @@ KEYS_GPG="${KEYS_GPG:-.env.keys.gpg}"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 die()          { echo "Error: $*" >&2; exit 1; }
-info()         { echo "[claude-start] $*"; }
+info()         { echo "[codex-start] $*"; }
 
 load_env_file() {
   local file="$1"
@@ -64,7 +70,7 @@ load_env_file_soft() {
 
 # ─── TTY-aware prompt ─────────────────────────────────────────────────────────
 # Prompts read from /dev/tty (like install.sh's ask()) so piping something into
-# claude.sh's own stdin can't be hijacked into answering a secret prompt; when
+# codex.sh's own stdin can't be hijacked into answering a secret prompt; when
 # there's no controlling terminal (CI), fall back to plain stdin.
 HAVE_TTY=false
 if { exec 3</dev/tty; } 2>/dev/null; then
@@ -86,11 +92,11 @@ read_secret() { # read_secret <prompt> -> prints the entered value
 # choose_mode <mode>... -> prints the chosen mode on stdout
 # Presents a numbered menu of the candidate modes and reads the choice from the
 # controlling terminal (mirroring read_secret's /dev/tty preference). With no
-# TTY the choice can't be made safely, so it dies and points at CLAUDE_AUTH_MODE.
+# TTY the choice can't be made safely, so it dies and points at CODEX_AUTH_MODE.
 choose_mode() {
   local modes=("$@") n=$# i reply
   if [[ "$HAVE_TTY" != true ]]; then
-    die "Ambiguous auth mode; markers for multiple modes are set (${modes[*]}). Set CLAUDE_AUTH_MODE to one of them."
+    die "Ambiguous auth mode; markers for multiple modes are set (${modes[*]}). Set CODEX_AUTH_MODE to one of them."
   fi
   {
     echo "Multiple auth modes detected. Choose one:"
@@ -173,7 +179,7 @@ new_passphrase() { # new_passphrase <verb> -> prints passphrase, dies on mismatc
 
 # Decrypt $KEYS_GPG and export every KEY=VALUE line into the current process env.
 load_keys_file() {
-  [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './claude.sh keys init' first."
+  [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './codex.sh keys init' first."
   local pass decrypted
   pass="$(read_secret "Passphrase for ${KEYS_GPG}: ")"
   decrypted="$(gpg_decrypt "$pass")" || die "Failed to decrypt '${KEYS_GPG}' (wrong passphrase?)"
@@ -189,8 +195,8 @@ load_keys_file() {
 # Vars whose name suggests a durable secret, auto-detected out of $ENV_FILE
 # for migration convenience. Not an allow-list for what the keys file may
 # hold — you can type any KEY=VALUE at the keys init/edit prompt regardless
-# of name. Covers *TOKEN*/*API_KEY*/*SECRET*/*ACCESS_KEY_ID* so AWS access
-# keys and secret keys migrate too, not just the Anthropic key.
+# of name. Covers *TOKEN*/*API_KEY*/*SECRET*/*ACCESS_KEY_ID* so both
+# OPENAI_API_KEY and AZURE_OPENAI_API_KEY migrate too.
 SECRET_NAME_PATTERN='^[A-Za-z_]*(TOKEN|API_KEY|SECRET|ACCESS_KEY_ID)[A-Za-z_]*=.+$'
 
 keys_init() {
@@ -203,7 +209,7 @@ keys_init() {
     info "Detected likely secrets in ${ENV_FILE} (will be migrated):"
     while IFS='=' read -r key _; do [[ -n "$key" ]] && info "  ${key}"; done < <(printf '%s\n' "$seed")
   fi
-  info "Enter any other secrets as KEY=VALUE (e.g. AWS_ACCESS_KEY_ID=...)."
+  info "Enter any other secrets as KEY=VALUE (e.g. OPENAI_API_KEY=...)."
   info "Blank line/Ctrl-D to finish and encrypt into ${KEYS_GPG}."
 
   local merged
@@ -234,7 +240,7 @@ keys_init() {
 }
 
 keys_edit() {
-  [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './claude.sh keys init' first."
+  [[ -f "$KEYS_GPG" ]] || die "'${KEYS_GPG}' not found. Run './codex.sh keys init' first."
 
   local pass current key
   pass="$(read_secret "Passphrase for ${KEYS_GPG}: ")"
@@ -270,27 +276,24 @@ if [[ "${1:-}" == "keys" ]]; then
 fi
 
 # ─── Auth mode selection ──────────────────────────────────────────────────────
-# Priority: explicit CLAUDE_AUTH_MODE override > inference from markers > api
-# fallback (keys file exists) > default (nothing set).
-if [[ -n "${CLAUDE_AUTH_MODE:-}" ]]; then
-  case "$CLAUDE_AUTH_MODE" in
-    bedrock|foundry|api) AUTH_MODE="$CLAUDE_AUTH_MODE" ;;
-    *) die "Invalid CLAUDE_AUTH_MODE='${CLAUDE_AUTH_MODE}' (expected bedrock|foundry|api)." ;;
+# Priority: explicit CODEX_AUTH_MODE override > inference from markers > api
+# fallback (keys file exists) > default (nothing set → ChatGPT sign-in).
+if [[ -n "${CODEX_AUTH_MODE:-}" ]]; then
+  case "$CODEX_AUTH_MODE" in
+    api|azure) AUTH_MODE="$CODEX_AUTH_MODE" ;;
+    *) die "Invalid CODEX_AUTH_MODE='${CODEX_AUTH_MODE}' (expected api|azure)." ;;
   esac
-  info "Auth mode: ${AUTH_MODE} (forced via CLAUDE_AUTH_MODE)"
+  info "Auth mode: ${AUTH_MODE} (forced via CODEX_AUTH_MODE)"
 else
   # Expose $ENV_FILE's plaintext markers to inference (secrets in $KEYS_GPG are
   # intentionally not decrypted here — see the header note).
   load_env_file_soft
 
   CANDIDATES=()
-  if [[ -n "${CLAUDE_CODE_USE_BEDROCK:-}${AWS_REGION:-}${AWS_PROFILE:-}${AWS_BEARER_TOKEN_BEDROCK:-}${AWS_ACCESS_KEY_ID:-}" ]]; then
-    CANDIDATES+=("bedrock")
+  if [[ -n "${AZURE_OPENAI_API_KEY:-}${AZURE_OPENAI_BASE_URL:-}" ]]; then
+    CANDIDATES+=("azure")
   fi
-  if [[ -n "${CLAUDE_CODE_USE_FOUNDRY:-}${ANTHROPIC_FOUNDRY_RESOURCE:-}${ANTHROPIC_FOUNDRY_API_KEY:-}" ]]; then
-    CANDIDATES+=("foundry")
-  fi
-  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  if [[ -n "${OPENAI_API_KEY:-}" ]]; then
     CANDIDATES+=("api")
   fi
 
@@ -311,67 +314,39 @@ fi
 
 case "$AUTH_MODE" in
 
-  bedrock)
-    info "Mode: AWS Bedrock"
+  azure)
+    info "Mode: Azure OpenAI"
     load_env_file "$ENV_FILE"
     [[ -f "$KEYS_GPG" ]] && load_keys_file
 
     # Always required
-    export CLAUDE_CODE_USE_BEDROCK=1
-    export AWS_REGION="${AWS_REGION:?Set AWS_REGION in ${ENV_FILE}}"
+    export AZURE_OPENAI_BASE_URL="${AZURE_OPENAI_BASE_URL:?Set AZURE_OPENAI_BASE_URL in ${ENV_FILE} (e.g. https://<resource>.openai.azure.com/openai)}"
+    export AZURE_OPENAI_API_KEY="${AZURE_OPENAI_API_KEY:?AZURE_OPENAI_API_KEY not found. Add it via './codex.sh keys init'.}"
 
-    # Auth priority: Bedrock API key > SSO profile > access key
-    if [[ -n "${AWS_BEARER_TOKEN_BEDROCK:-}" ]]; then
-      info "Bedrock auth: API key (AWS_BEARER_TOKEN_BEDROCK)"
-      export AWS_BEARER_TOKEN_BEDROCK
-
-    elif [[ -n "${AWS_PROFILE:-}" ]]; then
-      info "Bedrock auth: SSO profile (${AWS_PROFILE})"
-      export AWS_PROFILE
-
-    elif [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
-      info "Bedrock auth: access key"
-      export AWS_ACCESS_KEY_ID
-      export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:?AWS_ACCESS_KEY_ID set but AWS_SECRET_ACCESS_KEY missing}"
-      # Optional — only export if present
-      [[ -n "${AWS_SESSION_TOKEN:-}" ]] && export AWS_SESSION_TOKEN
-
-    else
-      die "No Bedrock credentials found. Set AWS_BEARER_TOKEN_BEDROCK or AWS_ACCESS_KEY_ID via './claude.sh keys init', or AWS_PROFILE in '${ENV_FILE}'."
-    fi
-
-    CLAUDE_PARAMS+=("--bedrock")
-    ;;
-
-  foundry)
-    info "Mode: Azure AI Foundry"
-    load_env_file "$ENV_FILE"
-    [[ -f "$KEYS_GPG" ]] && load_keys_file
-
-    # Always required
-    export CLAUDE_CODE_USE_FOUNDRY=1
-    export ANTHROPIC_FOUNDRY_RESOURCE="${ANTHROPIC_FOUNDRY_RESOURCE:?Set ANTHROPIC_FOUNDRY_RESOURCE in ${ENV_FILE}}"
-
-    # Auth priority: API key > SDK (Entra ID / az login)
-    if [[ -n "${ANTHROPIC_FOUNDRY_API_KEY:-}" ]]; then
-      info "Foundry auth: API key"
-      export ANTHROPIC_FOUNDRY_API_KEY
-    else
-      info "Foundry auth: SDK / Entra ID (az login)"
-      az account show >/dev/null 2>&1 || die "az CLI not logged in. Run 'az login' first."
-    fi
+    # Wire Codex's `azure` model provider from the environment. The key is read
+    # by Codex from AZURE_OPENAI_API_KEY (env_key); base URL + api-version come
+    # from $ENV_FILE. Pick your deployment with -m / the commented model above.
+    CODEX_PARAMS+=(
+      "-c" 'model_provider="azure"'
+      "-c" 'model_providers.azure.name="Azure OpenAI"'
+      "-c" "model_providers.azure.base_url=\"${AZURE_OPENAI_BASE_URL}\""
+      "-c" 'model_providers.azure.env_key="AZURE_OPENAI_API_KEY"'
+      "-c" "model_providers.azure.query_params={ api-version = \"${AZURE_OPENAI_API_VERSION}\" }"
+    )
     ;;
 
   api)
-    info "Mode: Anthropic API  (key from ${KEYS_GPG})"
+    info "Mode: OpenAI API  (key from ${KEYS_GPG})"
     load_keys_file
-    [[ -n "${ANTHROPIC_API_KEY:-}" ]] \
-      || die "ANTHROPIC_API_KEY not found in '${KEYS_GPG}'. Run './claude.sh keys init'."
-    export ANTHROPIC_API_KEY
+    [[ -n "${OPENAI_API_KEY:-}" ]] \
+      || die "OPENAI_API_KEY not found in '${KEYS_GPG}'. Run './codex.sh keys init'."
+    export OPENAI_API_KEY
+    # Prefer the API key even if a ChatGPT session happens to exist in CODEX_HOME.
+    CODEX_PARAMS+=("-c" 'preferred_auth_method="apikey"')
     ;;
 
   "")
-    info "Mode: default  (no auth override)"
+    info "Mode: default  (ChatGPT sign-in — run 'codex login' if not already)"
     ;;
 
   *)
@@ -380,15 +355,11 @@ case "$AUTH_MODE" in
 
 esac
 
-# -- Set global vars: https://code.claude.com/docs/en/env-vars
-export CLAUDE_CONFIG_DIR=./.claude
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-export CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
-export DISABLE_TELEMETRY=1
-export DISABLE_ERROR_REPORTING=1
-export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1
-export CLAUDE_CODE_ENABLE_AUTO_MODE=1
+# -- Set global vars: https://github.com/openai/codex/blob/main/docs/config.md
+# Project-local config/state dir (mirrors claude.sh's CLAUDE_CONFIG_DIR=./.claude).
+# Codex sends no telemetry by default, so there's nothing further to disable here.
+export CODEX_HOME="${CODEX_HOME:-./.codex}"
 
 # -- Launch
-mkdir -p "$CLAUDE_CONFIG_DIR"
-exec claude "${CLAUDE_PARAMS[@]}"
+mkdir -p "$CODEX_HOME"
+exec codex "${CODEX_PARAMS[@]}"

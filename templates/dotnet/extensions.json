@@ -1,3 +1,4 @@
 [
-    "ms-dotnettools.vscode-dotnet-pack"
+    "ms-dotnettools.csharp",
+    "ms-dotnettools.csdevkit"
 ]

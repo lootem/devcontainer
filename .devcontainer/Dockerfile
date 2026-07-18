@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN ln -sf /bin/bash /bin/sh
 
 # -- Claude Code
-ARG CLAUDECODE=true
+ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
 ARG CLAUDE_VER=2.1.206
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -47,6 +47,25 @@ RUN if [ "$CLAUDECODE" = "true" ]; then \
     fi
 USER root
 # -- End Claude Code
+
+# -- Codex CLI
+ARG CODEX=false
+# renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
+ARG CODEX_VER=0.144.5
+
+RUN if [ "$CODEX" = "true" ]; then \
+    ARCH="$(uname -m)" && \
+    PKG="codex-package-${ARCH}-unknown-linux-musl.tar.gz" && \
+    BASE="https://github.com/openai/codex/releases/download/rust-v${CODEX_VER}" && \
+    curl -fsSL "${BASE}/${PKG}" -o "/tmp/${PKG}" && \
+    curl -fsSL "${BASE}/codex-package_SHA256SUMS" -o /tmp/codex_sums.txt && \
+    ( cd /tmp && grep " ${PKG}\$" codex_sums.txt > codex.sha && sha256sum -c codex.sha ) && \
+    mkdir -p /opt/codex && \
+    tar -xzf "/tmp/${PKG}" -C /opt/codex && \
+    ln -sf /opt/codex/bin/codex /usr/local/bin/codex && \
+    rm -f "/tmp/${PKG}" /tmp/codex_sums.txt /tmp/codex.sha; \
+    fi
+# -- End Codex CLI
 
 # -- Go
 ARG GOLANG=false
