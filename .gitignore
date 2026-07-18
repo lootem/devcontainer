@@ -1,5 +1,8 @@
 .env
 .env.keys.gpg
 .claude/
+.codex/
+.agents/
 .handoffs/
 PRD-*.md
+.DS_Store
