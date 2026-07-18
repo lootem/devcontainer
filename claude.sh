@@ -8,7 +8,7 @@ set -euo pipefail
 
 # ─── Default CLI params (edit freely) ────────────────────────────────────────
 CLAUDE_PARAMS=(
-  "--setting-sources" "project"
+  "--setting-sources" "project,local"
   "--effort" "medium"
   "--permission-mode" "auto"
   # "--model" "claude-sonnet-5"
@@ -299,6 +299,12 @@ esac
 
 # -- Set global vars: https://code.claude.com/docs/en/env-vars
 export CLAUDE_CONFIG_DIR=./.claude
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+export DISABLE_TELEMETRY=1
+export DISABLE_ERROR_REPORTING=1
+export CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1
+export CLAUDE_CODE_ENABLE_AUTO_MODE=1
 
 # -- Launch
 mkdir -p "$CLAUDE_CONFIG_DIR"
