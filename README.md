@@ -44,7 +44,8 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 | --- | --- |
 | `-l`, `--language <list>` | Language(s): `python`, `go`, `js`, `dotnet`. Comma-combine, or omit to be prompted. |
 | `-T`, `--tool <list>` | Cloud/shell tool(s): `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`. Comma-combine. |
-| `--skills` | Also bring the curated Claude Code skills. |
+| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`. Comma-combine, or omit for `claude` (the default). |
+| `--skills` | Also bring the curated skills, into each selected CLI's skills dir. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
 | `--repo <owner/repo>` | Pull the template from a different repo (default `lootem/devcontainer`). |
@@ -53,6 +54,11 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 
 Enabling a tool only flips its Dockerfile build arg (no editor/`.gitignore`
 entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
+
+Selecting an AI CLI installs its binary, copies its launcher (`claude.sh` for
+`claude`, `codex.sh` for `codex`), and — with `--skills` — copies the curated
+skills into that CLI's skills dir (`.claude/skills/` for Claude, `.agents/skills/`
+for Codex; both read the same `SKILL.md` format).
 
 ### Keeping a generated repo up to date
 
@@ -108,19 +114,26 @@ upstream dropped).
 that lives with your project, not inside the throwaway container - so settings,
 permissions, and history survive every rebuild, scoped per project.
 
-## Bring your own Claude backend
+## Bring your own backend
 
-The included `claude.sh` helper picks how you connect and remembers it in a
-local `.env` (never committed). Copy `.env.example` to `.env`, fill in your
-backend's fields, and switch providers with a word:
+The `claude.sh` (and, for Codex, `codex.sh`) helper picks how you connect and
+remembers it in a local `.env` (never committed). Copy `.env.example` to `.env`,
+fill in your backend's fields, and just run the launcher — **the backend is
+inferred from the environment variables you've set**, no argument needed:
 
-- **`./claude.sh api`** - Anthropic API, using your API key.
-- **`./claude.sh bedrock`** - Amazon Bedrock, via a Bedrock API key, SSO profile, or AWS keys.
-- **`./claude.sh foundry`** - Azure AI Foundry, via a Foundry API key or your `az login` session.
-- No argument - defaults, with no backend override.
+- **`./claude.sh`** - Claude Code. Infers Anthropic API / Amazon Bedrock / Azure
+  AI Foundry from what's set (e.g. `AWS_REGION`, `ANTHROPIC_FOUNDRY_RESOURCE`),
+  or falls back to your API key. Force it with `CLAUDE_AUTH_MODE=api|bedrock|foundry`.
+- **`./codex.sh`** - Codex. Infers OpenAI API / Azure OpenAI (e.g.
+  `AZURE_OPENAI_BASE_URL`), or falls back to your API key / ChatGPT sign-in.
+  Force it with `CODEX_AUTH_MODE=api|azure`.
+
+If several backends' markers are set at once you're prompted to choose (or the
+override var decides, for CI).
 
 **Keep durable secrets encrypted at rest.** Run `./claude.sh keys init` (then
-`keys edit`) to move your secret `KEY=VALUE` (ex. `ANTHROPIC_API_KEY`) lines out of `.env` into a
+`keys edit`) — same subcommands on `codex.sh` — to move your secret `KEY=VALUE`
+(ex. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) lines out of `.env` into a
 gpg-encrypted `.env.keys.gpg`. It's decrypted to memory only when a backend needs
 it - plaintext never touches disk to mitigate opportunistic disk
 scraping.

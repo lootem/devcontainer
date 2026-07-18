@@ -419,7 +419,7 @@ run_surgical() {
 # --full mode: re-run install.sh, overwriting .devcontainer/ wholesale
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Dockerfile ARG name → --language/--tool token. Must cover every ARG
+# Dockerfile ARG name → --language/--tool/--cli token. Must cover every ARG
 # install.sh can flip, or a round-trip through update.sh silently drops that
 # feature (see test.sh's token-set-coverage assertion in the source repo).
 arg_token() {
@@ -433,6 +433,8 @@ arg_token() {
     GHCLI)      echo "gh" ;;
     POWERSHELL) echo "pwsh" ;;
     AZPWSH)     echo "azpwsh" ;;
+    CLAUDECODE) echo "claude" ;;
+    CODEX)      echo "codex" ;;
     *)          return 1 ;;
   esac
 }
@@ -440,13 +442,13 @@ arg_token() {
 run_full() {
   LANGS=()
   TOOLS=()
+  CLIS=()
   while IFS= read -r arg_name; do
     [ -z "$arg_name" ] && continue
-    # CLAUDECODE defaults to true and isn't a --language/--tool selector.
-    [ "$arg_name" = "CLAUDECODE" ] && continue
     token="$(arg_token "$arg_name")" || continue
     case "$arg_name" in
       PYTHON|GOLANG|NODEJS|DOTNET) LANGS+=("$token") ;;
+      CLAUDECODE|CODEX)            CLIS+=("$token") ;;
       *)                           TOOLS+=("$token") ;;
     esac
   # NB: extract NAME from each `ARG NAME=true` line with sed, not a PCRE
@@ -457,8 +459,9 @@ run_full() {
   ARGS=(--target "$REPO_ROOT" --repo "$REPO")
   [ ${#LANGS[@]} -gt 0 ] && ARGS+=(--language "$(IFS=,; echo "${LANGS[*]}")")
   [ ${#TOOLS[@]} -gt 0 ] && ARGS+=(--tool "$(IFS=,; echo "${TOOLS[*]}")")
+  [ ${#CLIS[@]} -gt 0 ] && ARGS+=(--cli "$(IFS=,; echo "${CLIS[*]}")")
 
-  [ -d "$REPO_ROOT/.claude/skills" ] && ARGS+=(--skills)
+  { [ -d "$REPO_ROOT/.claude/skills" ] || [ -d "$REPO_ROOT/.agents/skills" ]; } && ARGS+=(--skills)
 
   if [ -f "$DEVCONTAINER_JSON" ] && command -v jq >/dev/null 2>&1 \
      && [ "$(jq -r '((.customizations.vscode.extensions // []) | length > 0)' "$DEVCONTAINER_JSON" 2>/dev/null)" = "true" ]; then
@@ -472,6 +475,7 @@ run_full() {
 
   info "Detected languages: ${LANGS[*]:-none}"
   info "Detected tools: ${TOOLS[*]:-none}"
+  info "Detected AI CLIs: ${CLIS[*]:-none}"
   info "Re-running install.sh from $REPO@$REF ..."
 
   curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"

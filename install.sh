@@ -21,6 +21,7 @@ WANT_SKILLS=false
 WANT_EXTENSIONS=false
 LANGS=()
 TOOLS=()
+CLIS=()
 
 # Language token → Dockerfile ARG name.
 lang_arg() {
@@ -49,6 +50,28 @@ tool_arg() {
   esac
 }
 VALID_TOOLS="awscli azcli gh pwsh azpwsh"
+
+# AI CLI token → Dockerfile ARG name. Selecting a CLI installs its binary,
+# copies its helper script (claude.sh/codex.sh), and copies skills/ into that
+# CLI's skills dir (see cli_skills_dir). All CLI ARGs default false in the
+# Dockerfile; install.sh flips only the selected ones true.
+cli_arg() {
+  case "$1" in
+    claude) echo "CLAUDECODE" ;;
+    codex)  echo "CODEX" ;;
+    *)      return 1 ;;
+  esac
+}
+# Where each CLI loads project-level skills from. Claude reads .claude/skills;
+# Codex reads .agents/skills (same SKILL.md format).
+cli_skills_dir() {
+  case "$1" in
+    claude) echo ".claude/skills" ;;
+    codex)  echo ".agents/skills" ;;
+    *)      return 1 ;;
+  esac
+}
+VALID_CLIS="claude codex"
 
 # --- TTY-aware helpers ----------------------------------------------------------
 HAVE_TTY=false
@@ -119,12 +142,26 @@ add_tools() { # split a comma-separated list into TOOLS
   done
 }
 
+add_clis() { # split a comma-separated list into CLIS
+  local IFS=','
+  for c in $1; do
+    [ -n "$c" ] && CLIS+=("$c")
+  done
+}
+
+# has_cli <name> -> 0 if <name> is in the selected CLIS, else 1
+has_cli() {
+  case " ${CLIS[*]:-} " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
 usage() {
   cat <<EOF
 Usage: install.sh [options]
 
   -l, --language <list>  Comma-separated or repeated languages ($VALID_LANGS)
   -T, --tool <list>      Comma-separated or repeated tools ($VALID_TOOLS)
+  -c, --cli <list>       Comma-separated or repeated AI CLIs ($VALID_CLIS; default: claude)
       --skills           Copy skills/ into .claude/skills/ (default: off)
       --extensions       Add recommended VS Code extensions to devcontainer.json (default: off)
   -t, --target <dir>     Target directory (default: current directory)
@@ -141,6 +178,8 @@ while [ $# -gt 0 ]; do
     --language=*)  add_langs "${1#*=}"; shift ;;
     -T|--tool)     add_tools "$2"; shift 2 ;;
     --tool=*)      add_tools "${1#*=}"; shift ;;
+    -c|--cli)      add_clis "$2"; shift 2 ;;
+    --cli=*)       add_clis "${1#*=}"; shift ;;
     --skills)      WANT_SKILLS=true; shift ;;
     --extensions)  WANT_EXTENSIONS=true; shift ;;
     -t|--target)   TARGET="$2"; shift 2 ;;
@@ -163,6 +202,13 @@ if [ ${#LANGS[@]} -eq 0 ]; then
   else
     die "No --language given and no tty for a prompt. Pass --language."
   fi
+fi
+
+# AI CLIs: prompt when interactive and none were passed. A blank answer (and the
+# non-interactive case) falls through to the claude default set below.
+if [ ${#CLIS[@]} -eq 0 ] && [ "$HAVE_TTY" = true ]; then
+  info "Available AI CLIs: $VALID_CLIS"
+  add_clis "$(ask 'AI CLIs (comma-separated, blank for claude): ')"
 fi
 
 # Validate & de-duplicate language tokens.
@@ -195,8 +241,22 @@ TOOLS=("${CLEAN_TOOLS[@]:-}")
 # Drop the empty placeholder that :-"" may leave when no tools selected.
 [ "${TOOLS[0]:-}" = "" ] && TOOLS=()
 
+# Validate & de-duplicate AI CLI tokens, then default to claude when none chosen
+# (blank prompt or non-interactive run) — preserves the historic default.
+SEEN=" "
+CLEAN_CLIS=()
+for c in ${CLIS[@]+"${CLIS[@]}"}; do
+  cli_arg "$c" >/dev/null 2>&1 || die "Unknown CLI '$c'. Valid: $VALID_CLIS"
+  case "$SEEN" in *" $c "*) continue ;; esac
+  SEEN="$SEEN$c "
+  CLEAN_CLIS+=("$c")
+done
+CLIS=("${CLEAN_CLIS[@]:-}")
+[ "${CLIS[0]:-}" = "" ] && CLIS=()
+[ ${#CLIS[@]} -eq 0 ] && CLIS=(claude)
+
 if [ "$WANT_SKILLS" = false ] && [ "$HAVE_TTY" = true ]; then
-  case "$(ask 'Install Claude skills into .claude/skills/? [y/N] ')" in
+  case "$(ask 'Install skills into the selected CLIs'"'"' skills dirs? [y/N] ')" in
     y|Y|yes) WANT_SKILLS=true ;;
   esac
 fi
@@ -361,14 +421,17 @@ merge_settings_json() { # merge_settings_json <dest>  (reads generated JSON on s
 # ═══ Assembly ═══════════════════════════════════════════════════════════════════
 
 # --- .devcontainer/ verbatim files -----------------------------------------------
-copy_verbatim "$DEVC/docker-compose.yml" "$TARGET/.devcontainer/docker-compose.yml"
+# Ship the clean templates/ compose (no build args) — the CLI selection is baked
+# into the copied Dockerfile's ARG defaults, so generated projects need no args.
+# (.devcontainer/docker-compose.yml carries maintainer-only args; don't copy it.)
+copy_verbatim "$TPL/docker-compose.yml" "$TARGET/.devcontainer/docker-compose.yml"
 [ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"
 if [ -f "$DEVC/update.sh" ]; then
   copy_verbatim "$DEVC/update.sh" "$TARGET/.devcontainer/update.sh"
   [ -f "$TARGET/.devcontainer/update.sh" ] && chmod +x "$TARGET/.devcontainer/update.sh"
 fi
 
-# --- .devcontainer/Dockerfile with language + tool ARGs flipped to true ---------
+# --- .devcontainer/Dockerfile with language + tool + CLI ARGs flipped to true ---
 DOCKERFILE_TMP="$SRC/Dockerfile.built"
 cp "$DEVC/Dockerfile" "$DOCKERFILE_TMP"
 for l in ${LANGS[@]+"${LANGS[@]}"}; do
@@ -385,6 +448,14 @@ for t in ${TOOLS[@]+"${TOOLS[@]}"}; do
   mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
   if ! grep -q "^ARG ${arg}=true" "$DOCKERFILE_TMP"; then
     die "Could not enable '$t' — no 'ARG ${arg}=false' line in Dockerfile."
+  fi
+done
+for c in ${CLIS[@]+"${CLIS[@]}"}; do
+  arg="$(cli_arg "$c")"
+  sed "s#^ARG ${arg}=false#ARG ${arg}=true#" "$DOCKERFILE_TMP" > "$DOCKERFILE_TMP.new"
+  mv "$DOCKERFILE_TMP.new" "$DOCKERFILE_TMP"
+  if ! grep -q "^ARG ${arg}=true" "$DOCKERFILE_TMP"; then
+    die "Could not enable CLI '$c' — no 'ARG ${arg}=false' line in Dockerfile."
   fi
 done
 copy_verbatim "$DOCKERFILE_TMP" "$TARGET/.devcontainer/Dockerfile"
@@ -443,24 +514,37 @@ for l in ${LANGS[@]+"${LANGS[@]}"}; do
   esac
 done
 
-# --- Root helper files (always) --------------------------------------------------
-if [ -f "$SRC/claude.sh" ]; then
+# --- Root helper files (per selected CLI) ---------------------------------------
+# Each CLI's launcher is copied only when that CLI is selected; .env/.env.keys.gpg
+# machinery is shared, so .env.example is always useful.
+if has_cli claude && [ -f "$SRC/claude.sh" ]; then
   copy_verbatim "$SRC/claude.sh" "$TARGET/claude.sh"
   [ -f "$TARGET/claude.sh" ] && chmod +x "$TARGET/claude.sh"
 fi
+if has_cli codex && [ -f "$SRC/codex.sh" ]; then
+  copy_verbatim "$SRC/codex.sh" "$TARGET/codex.sh"
+  [ -f "$TARGET/codex.sh" ] && chmod +x "$TARGET/codex.sh"
+fi
 [ -f "$SRC/.env.example" ] && copy_verbatim "$SRC/.env.example" "$TARGET/.env.example"
 
-# --- Skills (optional; left untracked via .claude/ gitignore) --------------------
+# --- Skills (optional) — copied into each selected CLI's skills dir ---------------
+# claude → .claude/skills, codex → .agents/skills (same SKILL.md format). Both are
+# kept committable by the generated .gitignore.
+SKILLS_DIRS=()
 if [ "$WANT_SKILLS" = true ]; then
   if [ -d "$SRC/skills" ]; then
-    if may_write "$TARGET/.claude/skills"; then
-      mkdir -p "$TARGET/.claude/skills"
-      cp -R "$SRC/skills/." "$TARGET/.claude/skills/"
-      # Maintainer-only tool for re-vendoring skills/ itself — irrelevant
-      # (and not meant to run) inside a generated project's .claude/skills/.
-      rm -f "$TARGET/.claude/skills/vendor-matt-pocock-skills.sh"
-      info "Wrote $TARGET/.claude/skills/"
-    fi
+    for c in ${CLIS[@]+"${CLIS[@]}"}; do
+      dir="$(cli_skills_dir "$c")"
+      if may_write "$TARGET/$dir"; then
+        mkdir -p "$TARGET/$dir"
+        cp -R "$SRC/skills/." "$TARGET/$dir/"
+        # Maintainer-only tool for re-vendoring skills/ itself — irrelevant
+        # (and not meant to run) inside a generated project's skills dir.
+        rm -f "$TARGET/$dir/vendor-matt-pocock-skills.sh"
+        info "Wrote $TARGET/$dir/"
+        SKILLS_DIRS+=("$dir")
+      fi
+    done
   else
     info "No skills/ directory in source; skipping."
   fi
@@ -475,6 +559,7 @@ else
   info "Languages enabled: (none — base devcontainer only)"
 fi
 [ ${#TOOLS[@]} -gt 0 ] && info "Tools enabled: ${TOOLS[*]}"
-[ "$WANT_SKILLS" = true ] && info "Skills installed to .claude/skills/ (untracked)"
+info "AI CLIs enabled: ${CLIS[*]}"
+[ "$WANT_SKILLS" = true ] && [ ${#SKILLS_DIRS[@]} -gt 0 ] && info "Skills installed to: ${SKILLS_DIRS[*]}"
 [ "$WANT_EXTENSIONS" = true ] && info "Recommended VS Code extensions added to devcontainer.json"
 exit 0

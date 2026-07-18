@@ -8,6 +8,11 @@
   packageRules: [
     { matchUpdateTypes: ['major'], enabled: false },
     { matchUpdateTypes: ['minor', 'patch', 'digest'], minimumReleaseAge: '7 days' },
+    // Codex tags stable releases as `rust-v0.144.5` and prereleases as
+    // `rust-v0.145.0-alpha.N`. Renovate's default ignoreUnstable already skips
+    // semver prereleases, but this hard-excludes any `-alpha` outright so an
+    // alpha can never be proposed even if upstream retags one as stable.
+    { matchDepNames: ['openai/codex'], allowedVersions: '!/-alpha/' },
   ],
 
   // Auto-merge once the build check passes (see build.yml). Timing is owned
@@ -37,7 +42,7 @@
       customType: 'regex',
       managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
       matchStrings: [
-        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER)=(?<currentValue>\\S+)',
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER|CODEX_VER|DLV_VER)=(?<currentValue>\\S+)',
       ],
     },
     {
