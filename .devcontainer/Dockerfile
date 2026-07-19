@@ -162,7 +162,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- AZCLI
 ARG AZCLI=false
 # renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
-ARG AZ_VER=2.87.0
+ARG AZ_VER=2.88.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$AZCLI" = "true" ]; then \
@@ -215,7 +215,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.35.20
+ARG AWS_VER=2.35.21
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
