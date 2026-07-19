@@ -162,7 +162,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- AZCLI
 ARG AZCLI=false
 # renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
-ARG AZ_VER=2.87.0
+ARG AZ_VER=2.88.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$AZCLI" = "true" ]; then \
