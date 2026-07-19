@@ -1,35 +1,41 @@
 {
-  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
 
-  // Never auto-bump majors; hold every other update 7 days so a compromised
-  // release has time to be caught first. Strict filter withholds anything
-  // whose age can't be confirmed rather than letting it through ungated.
-  internalChecksFilter: 'strict',
-  packageRules: [
-    { matchUpdateTypes: ['major'], enabled: false },
-    { matchUpdateTypes: ['minor', 'patch', 'digest'], minimumReleaseAge: '7 days' },
-    // Codex tags stable releases as `rust-v0.144.5` and prereleases as
-    // `rust-v0.145.0-alpha.N`. Renovate's default ignoreUnstable already skips
-    // semver prereleases, but this hard-excludes any `-alpha` outright so an
-    // alpha can never be proposed even if upstream retags one as stable.
-    { matchDepNames: ['openai/codex'], allowedVersions: '!/-alpha/' },
-  ],
+  // Withhold any update whose release age can't be confirmed rather than
+  // letting it through ungated. Works in tandem with minimumReleaseAge.
+  internalChecksFilter: "strict",
 
-  // Auto-merge once the build check passes (see build.yml). Timing is owned
-  // by the workflow cron, not an in-config schedule.
-  //
-  // platformAutomerge is intentionally FALSE: Renovate merges the PR itself
-  // (via RENOVATE_TOKEN, which has Contents: write) and its own merge logic
-  // enforces minimumReleaseAge internally. Delegating to GitHub's native
-  // auto-merge (true) would only honour the 7-day gate if
-  // `renovate/stability-days` were a REQUIRED status check on main — but a
-  // required check that only Renovate ever posts deadlocks every human
-  // dev->main PR ("waiting for status to be reported"), since required checks
-  // can't be scoped to a source branch. Self-merge keeps the gate without
-  // that required check.
   automerge: true,
-  automergeType: 'pr',
-  platformAutomerge: false,
+  automergeType: "pr",
+
+  packageRules: [
+    // Never propose major bumps.
+    {
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
+    // Gate every non-major on 7 days of release age.
+    // prCreation:"not-pending" means no PR is created until the age check
+    // has already passed — avoids a week-old pending PR sitting in the list.
+    {
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      minimumReleaseAge: "7 days",
+      prCreation: "not-pending",
+    },
+
+    // Hard-exclude openai/codex alpha tags even if upstream retags one stable.
+    {
+      matchDepNames: ["openai/codex"],
+      allowedVersions: "!/-alpha/",
+    },
+
+    // Combine every non-major update into one PR.
+    {
+      matchPackageNames: ["*"],
+      groupName: "all dependencies",
+      groupSlug: "all",
+    },
+  ],
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`
   // comments. The base-image digest is bumped by base-image-digest.yml
