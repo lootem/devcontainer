@@ -29,9 +29,9 @@ set -euo pipefail
 # Equivalent of claude.sh's defaults: medium reasoning effort and an "auto"
 # permission posture (edit within the workspace, let the model ask to escalate).
 CODEX_PARAMS=(
-  "--sandbox" "workspace-write"
   "--ask-for-approval" "on-request"
   "-c" 'model_reasoning_effort="medium"'
+  "--sandbox" "danger-full-access"
   # "-m" "gpt-5-codex"
 )
 
