@@ -4,5 +4,39 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
     entrypoint: sleep infinity
+    environment:
+      # Anthropic API
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # AWS Bedrock
+      # CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK:-}
+      # AWS_REGION: ${AWS_REGION:-}
+      # AWS_PROFILE: ${AWS_PROFILE:-}
+      # AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+      # AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      # AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+
+      # Azure AI Foundry
+      # CLAUDE_CODE_USE_FOUNDRY: ${CLAUDE_CODE_USE_FOUNDRY:-}
+      # ANTHROPIC_FOUNDRY_RESOURCE: ${ANTHROPIC_FOUNDRY_RESOURCE:-}
+      # ANTHROPIC_FOUNDRY_API_KEY: ${ANTHROPIC_FOUNDRY_API_KEY:-}
+
+      # OpenAI API
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # Azure OpenAI
+      # AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      # AZURE_RESOURCE_NAME: ${AZURE_RESOURCE_NAME:-}
+
+      # Kiro CLI headless authentication
+      # KIRO_API_KEY: ${KIRO_API_KEY:-}
+
+      # __CLI_ENVIRONMENT_BEGIN__
+      # __CLI_ENVIRONMENT__
+      # __CLI_ENVIRONMENT_END__
     volumes:
       - ..:/app
+      # __CLI_VOLUMES_BEGIN__
+      # __CLI_VOLUMES__
+      # __CLI_VOLUMES_END__

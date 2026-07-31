@@ -8,6 +8,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Weekly multi-architecture validation catches withdrawn Kiro artifacts.
+    - cron: '0 13 * * 3'
   workflow_dispatch:
 
 jobs:
@@ -34,7 +37,11 @@ jobs:
           # Build when we can't compute a diff (first push / missing base) to stay safe.
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base" 2>/dev/null; then
             changed=true
-          elif git diff --name-only "$base" "$head" | grep -qx '.devcontainer/Dockerfile'; then
+          # A .devcontainer/dependencies.lock.json-only Kiro update is
+          # build-relevant even when the Dockerfile itself is unchanged. This
+          # is the kiro-changing PR validation gate.
+          elif git diff --name-only "$base" "$head" | grep -qE \
+            '^(\.devcontainer/(Dockerfile|dependencies\.lock\.json)|install\.sh|renovate\.json5|\.github/(renovate-global\.json5|workflows/build\.yml)|templates/(basegitignore|docker-compose\.yml)|\.env\.example)$'; then
             changed=true
           else
             changed=false
@@ -60,18 +67,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        # Skip on push to main: a Dockerfile change there is validated by the
-        # publish job's all-features `all` image, so building all-on here too
-        # would be a redundant second build. PRs + manual dispatch still build.
-        if: needs.detect.outputs.dockerfile == 'true' && github.event_name != 'push'
+        if: needs.detect.outputs.dockerfile == 'true'
 
       # Build with every feature ARG on so a bump to any feature layer
       # (azcli/pwsh/azpwsh/awscli included) actually compiles, not just the
-      # default python/go/js/dotnet baseline. Never pushed - PRs never get
-      # registry credentials. Both arches must build - a missing arm64 build
-      # is a failure, never a silent skip.
+      # default python/go/js/dotnet baseline. Never pushed. Both arches must
+      # build - a missing arm64 build is a failure, never a silent skip.
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        if: needs.detect.outputs.dockerfile == 'true' && github.event_name != 'push'
+        if: needs.detect.outputs.dockerfile == 'true'
         with:
           context: .
           file: .devcontainer/Dockerfile
@@ -80,6 +83,8 @@ jobs:
           build-args: |
             CLAUDECODE=true
             CODEX=true
+            OPENCODE=true
+            KIRO=true
             GOLANG=true
             PYTHON=true
             NODEJS=true
@@ -88,95 +93,5 @@ jobs:
             POWERSHELL=true
             AZPWSH=true
             AWSCLI=true
-          cache-from: type=gha,scope=pr-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=pr-${{ matrix.arch }}
-
-  # Publishes the standalone Docker Hub image (see README "pull & run"). Only
-  # fires on a Dockerfile change landing on main - never on PRs, so registry
-  # credentials are never exposed to a PR build. install.sh remains the
-  # reproducible, pinned path; this is a rolling convenience tag.
-  #
-  # Each native runner builds `all` for its own arch and pushes it by digest
-  # (no tag yet, so neither digest is user-visible on its own); the merge job
-  # below then combines both digests into the single multi-arch `:all` tag.
-  publish:
-    needs: detect
-    if: needs.detect.outputs.dockerfile == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        id: build
-        with:
-          context: .
-          file: .devcontainer/Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=lootemsec/devcontainer,push-by-digest=true,name-canonical=true,push=true
-          build-args: |
-            CLAUDECODE=true
-            CODEX=true
-            GOLANG=true
-            PYTHON=true
-            NODEJS=true
-            DOTNET=true
-            AZCLI=true
-            POWERSHELL=true
-            AZPWSH=true
-            AWSCLI=true
-          cache-from: type=gha,scope=all-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=all-${{ matrix.arch }}
-
-      - name: Export digest
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: digests-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  # Combines the per-arch digests published above into the single multi-arch
-  # `lootemsec/devcontainer:all` manifest list.
-  merge:
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-
-      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Create and push manifest list
-        working-directory: /tmp/digests
-        run: |
-          set -euo pipefail
-          docker buildx imagetools create -t lootemsec/devcontainer:all \
-            $(printf 'lootemsec/devcontainer@sha256:%s ' *)
+          cache-from: type=gha,scope=build-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.arch }}

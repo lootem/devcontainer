@@ -21,6 +21,79 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Use bash as the default shell
 RUN ln -sf /bin/bash /bin/sh
 
+# -- Opencode
+ARG OPENCODE=false
+# renovate: datasource=npm depName=opencode-linux-x64
+ARG OPENCODE_VER=1.18.4
+
+RUN if [ "$OPENCODE" = "true" ]; then \
+    ARCH="$(dpkg --print-architecture)" && \
+    case "$ARCH" in \
+      amd64) NPM_PKG="opencode-linux-x64" ;; \
+      arm64) NPM_PKG="opencode-linux-arm64" ;; \
+      *) echo "Unsupported OpenCode architecture: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    META="/tmp/opencode-meta.json" && \
+    PKG="/tmp/${NPM_PKG}-${OPENCODE_VER}.tgz" && \
+    curl -fsSL "https://registry.npmjs.org/${NPM_PKG}/${OPENCODE_VER}" -o "$META" && \
+    [ "$(jq -r '.name' "$META")" = "$NPM_PKG" ] && \
+    [ "$(jq -r '.version' "$META")" = "$OPENCODE_VER" ] && \
+    TARBALL="$(jq -r '.dist.tarball' "$META")" && \
+    INTEGRITY="$(jq -r '.dist.integrity' "$META")" && \
+    case "$INTEGRITY" in sha512-*) ;; *) echo "Missing npm SHA-512 integrity" >&2; exit 1 ;; esac && \
+    EXPECTED_B64="${INTEGRITY#sha512-}" && \
+    [ -n "$EXPECTED_B64" ] && \
+    curl -fsSL "$TARBALL" -o "$PKG" && \
+    EXPECTED_HEX="$(printf '%s' "$EXPECTED_B64" | base64 -d \
+      | od -An -tx1 | tr -d '[:space:]')" && \
+    printf '%s  %s\n' "$EXPECTED_HEX" "$PKG" | sha512sum -c - && \
+    tar -xzf "$PKG" -C /usr/local/bin --strip-components=2 package/bin/opencode && \
+    chmod 0755 /usr/local/bin/opencode && \
+    rm -f "$PKG" "$META"; \
+    fi
+
+# -- End Opencode
+
+# -- Kiro CLI
+ARG KIRO=false
+
+RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/dependencies.lock.json,readonly \
+    if [ "$KIRO" = "true" ]; then \
+    ARCH="$(dpkg --print-architecture)" && \
+    jq -e '.schemaVersion == 1' /tmp/dependencies.lock.json >/dev/null && \
+    AMD64_VERSION="$(jq -er '.kiro.amd64.version | select(type == "string")' /tmp/dependencies.lock.json)" && \
+    ARM64_VERSION="$(jq -er '.kiro.arm64.version | select(type == "string")' /tmp/dependencies.lock.json)" && \
+    [ "$AMD64_VERSION" = "$ARM64_VERSION" ] && \
+    VERSION="$AMD64_VERSION" && \
+    case "$VERSION" in *[!0-9.]*|.*|*.|*..*) echo "Invalid locked Kiro version" >&2; exit 1 ;; esac && \
+    [ "$(printf '%s' "$VERSION" | awk -F. '{ print NF }')" -eq 3 ] && \
+    AMD64_URL="$(jq -er '.kiro.amd64.url | select(type == "string")' /tmp/dependencies.lock.json)" && \
+    ARM64_URL="$(jq -er '.kiro.arm64.url | select(type == "string")' /tmp/dependencies.lock.json)" && \
+    AMD64_SHA256="$(jq -er '.kiro.amd64.sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' /tmp/dependencies.lock.json)" && \
+    ARM64_SHA256="$(jq -er '.kiro.arm64.sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' /tmp/dependencies.lock.json)" && \
+    [ "$AMD64_URL" = "https://desktop-release.q.us-east-1.amazonaws.com/${VERSION}/kirocli-x86_64-linux.tar.xz" ] && \
+    [ "$ARM64_URL" = "https://desktop-release.q.us-east-1.amazonaws.com/${VERSION}/kirocli-aarch64-linux.tar.xz" ] && \
+    case "$ARCH" in \
+      amd64) EXPECTED_FILE="kirocli-x86_64-linux.tar.xz"; URL="$AMD64_URL"; SHA256="$AMD64_SHA256" ;; \
+      arm64) EXPECTED_FILE="kirocli-aarch64-linux.tar.xz"; URL="$ARM64_URL"; SHA256="$ARM64_SHA256" ;; \
+      *) echo "Unsupported Kiro architecture: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    ARCHIVE="/tmp/$EXPECTED_FILE" && \
+    EXTRACT="/tmp/kiro-extract" && \
+    curl --proto '=https' --tlsv1.2 -fsSL "$URL" -o "$ARCHIVE" && \
+    printf '%s  %s\n' "$SHA256" "$ARCHIVE" | sha256sum -c - && \
+    mkdir -p "$EXTRACT" && \
+    tar -xJf "$ARCHIVE" -C "$EXTRACT" && \
+    [ -x "$EXTRACT/kirocli/bin/kiro-cli" ] && \
+    [ -x "$EXTRACT/kirocli/bin/kiro-cli-chat" ] && \
+    [ -x "$EXTRACT/kirocli/bin/kiro-cli-term" ] && \
+    install -m 0755 "$EXTRACT/kirocli/bin/kiro-cli" /usr/local/bin/kiro-cli && \
+    install -m 0755 "$EXTRACT/kirocli/bin/kiro-cli-chat" /usr/local/bin/kiro-cli-chat && \
+    install -m 0755 "$EXTRACT/kirocli/bin/kiro-cli-term" /usr/local/bin/kiro-cli-term && \
+    rm -rf "$ARCHIVE" "$EXTRACT"; \
+    fi
+# -- End Kiro CLI
+
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code

@@ -33,7 +33,7 @@ bash install.sh --language python
 ```
 
 `ltm.sh/dev/<ref>` serves `install.sh` from any branch/tag/sha (bare `ltm.sh/dev`
-→ `main`). CI attests `install.sh` and `.devcontainer/update.sh` on every push to
+→ `main`). CI attests `install.sh` on every push to
 `main` (`attest.yml`) via `actions/attest-build-provenance`. This is a
 **provenance** guarantee (origin and build), not content-safety, and only holds
 if you verify the *same* ref the URL serves - pin both to one sha.
@@ -44,7 +44,7 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 | --- | --- |
 | `-l`, `--language <list>` | Language(s): `python`, `go`, `js`, `dotnet`. Comma-combine, or omit to be prompted. |
 | `-T`, `--tool <list>` | Cloud/shell tool(s): `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`. Comma-combine. |
-| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`. Comma-combine, or omit for `claude` (the default). |
+| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`, `opencode`, `kiro`. Comma-combine, or omit for none. |
 | `--skills` | Also bring the curated skills, into each selected CLI's skills dir. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
@@ -55,88 +55,74 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 Enabling a tool only flips its Dockerfile build arg (no editor/`.gitignore`
 entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
 
-Selecting an AI CLI installs its binary, copies its launcher (`claude.sh` for
-`claude`, `codex.sh` for `codex`), and — with `--skills` — copies the curated
-skills into that CLI's skills dir (`.claude/skills/` for Claude, `.agents/skills/`
-for Codex; both read the same `SKILL.md` format).
+Selecting an AI CLI installs its binary for direct execution and gives it
+project-local native state (`.claude/`, `.codex/`, `.opencode/`, or `.kiro/`). With
+`--skills`, the curated skills are copied into `.claude/skills/`,
+`.agents/skills/`, `.opencode/skills/`, or `.kiro/skills/`. Passing `--skills`
+without at least one selected CLI is an error.
+
+OpenCode installs the architecture-specific headless CLI package from npm. The
+build verifies the package tarball against npm's published SHA-512 integrity
+value before extracting `opencode`.
+
+Kiro installs the official headless GNU/Linux artifact for the build's actual
+architecture. Both amd64 and arm64 versioned URLs and SHA-256 values are pinned
+in `.devcontainer/dependencies.lock.json`; Kiro's background updater is disabled.
 
 ### Keeping a generated repo up to date
 
-Every generated repo gets a `.devcontainer/update.sh`, manual only. By default
-it runs **surgical**: it fetches upstream's `Dockerfile` + `devcontainer.json`
-(parsed only, never executed) and bumps in place every pinned version this
-repo already tracks - each `# renovate:`-annotated `ARG`, the base image
-`@sha256:` digest, and `devcontainer.json` extension `@version` pins - for keys
-present both locally and upstream. Toggle `ARG`s, comments, and any other local
-edits are left untouched. It prints a summary of what bumped and what was
-skipped (and why).
+Generated repositories commit `.devcontainer/scaffold.json` and the same executable installer at `.devcontainer/install.sh`. The metadata records desired feature selections and upstream provenance; it contains no target path, timestamp, credentials, or machine-local state.
+
+Surgical updates refresh transplantable pins, dependency locks, signing material, extension pins, provenance, and the checked-in installer while preserving local structure:
 
 ```bash
-.devcontainer/update.sh                 # bump pins from lootem/devcontainer@main
-.devcontainer/update.sh --ref <sha>     # pin to a specific commit
-.devcontainer/update.sh --repo <owner/repo>  # pull pins from a fork
+.devcontainer/install.sh update
+.devcontainer/install.sh update --ref <branch-tag-or-sha>
 ```
 
-`--full` instead re-runs `install.sh` and overwrites `.devcontainer/` wholesale
-(the original behavior) - useful for pulling in structural upstream changes
-(e.g. a new arch layout), but it clobbers local Dockerfile/devcontainer.json
-edits:
+Use full mode for structural template changes or feature-selection changes. With a controlling terminal it summarizes the requested restamp before writing; in automation, pass `--force` explicitly:
 
 ```bash
-.devcontainer/update.sh --full
-.devcontainer/update.sh --full -- --force    # forward extra flags to install.sh
+.devcontainer/install.sh update --full
+.devcontainer/install.sh update --full --force
 ```
 
-### Prefer a prebuilt image?
-
-If you just want to `docker run`, a prebuilt image is on [Docker Hub](https://hub.docker.com/repository/docker/lootemsec/devcontainer) as a rolling,
-multi-arch (**amd64 + arm64**) tag (rebuilt on every Dockerfile change on `main`):
-
-```bash
-docker pull lootemsec/devcontainer:all      # every language + cloud CLI
-```
-
-This single `:all` tag includes every language plus the AWS/Azure CLIs and
-PowerShell; it ships Claude Code pre-installed with auto-update disabled. For
-reproducible, pinned, supply-chain-gated, per-language builds, use `install.sh`
-instead.
+The metadata is authoritative. If enabled Dockerfile features drift from it, update stops unless `--force` explicitly acknowledges that drift. Branch installs keep tracking their branch; an install pinned to a commit remains frozen until `--ref` replaces it.
 
 ## What you get
 
 Open the folder in [VS Code](https://code.visualstudio.com/) with the
 [Dev Containers](https://containers.dev/) extension and start working: a dev
-container tuned for your language(s), with editor settings, recommended
-extensions, and a starter `.gitignore`, plus Claude Code ready to run (add
-`--skills` for the curated skills; reruns only add/update, never remove ones
-upstream dropped).
-
-**Your Claude setup sticks around.** Claude Code points at a `.claude` folder
-that lives with your project, not inside the throwaway container - so settings,
-permissions, and history survive every rebuild, scoped per project.
+container tuned for your language(s), with editor settings, optional recommended
+extensions, and a starter `.gitignore`. Selected AI CLIs run by their native
+command (`claude`, `codex`, `opencode`, or `kiro-cli`) and keep configuration, credentials,
+and history in ignored workspace directories so they survive container rebuilds.
+OpenCode's native `/connect` credentials persist under `.opencode/data`.
 
 ## Bring your own backend
 
-The `claude.sh` (and, for Codex, `codex.sh`) helper picks how you connect and
-remembers it in a local `.env` (never committed). Copy `.env.example` to `.env`,
-fill in your backend's fields, and just run the launcher — **the backend is
-inferred from the environment variables you've set**, no argument needed:
+Copy `.env.example` to the ignored `.env`, fill in the provider values you need,
+then uncomment only their matching `${VAR:-}` entries in
+`.devcontainer/docker-compose.yml`. Compose does not inject `.env` wholesale.
+The documented first-class families are Anthropic API, AWS Bedrock, Azure AI
+Foundry, OpenAI API, and Azure OpenAI.
 
-- **`./claude.sh`** - Claude Code. Infers Anthropic API / Amazon Bedrock / Azure
-  AI Foundry from what's set (e.g. `AWS_REGION`, `ANTHROPIC_FOUNDRY_RESOURCE`),
-  or falls back to your API key. Force it with `CLAUDE_AUTH_MODE=api|bedrock|foundry`.
-- **`./codex.sh`** - Codex. Infers OpenAI API / Azure OpenAI (e.g.
-  `AZURE_OPENAI_BASE_URL`), or falls back to your API key / ChatGPT sign-in.
-  Force it with `CODEX_AUTH_MODE=api|azure`.
+Run each selected CLI directly. Claude consumes the Anthropic, Bedrock, and
+Foundry variables natively. Codex consumes `OPENAI_API_KEY`; its generated
+`model_providers.azure` configuration uses `AZURE_OPENAI_API_KEY` after you
+replace the resource placeholder and select the Azure provider/model at the top
+level of `.codex/config.toml`; its endpoint and API version are native TOML
+settings rather than environment variables. OpenCode supports the documented
+variables and its broader provider catalog through native configuration and
+`/connect`.
 
-If several backends' markers are set at once you're prompted to choose (or the
-override var decides, for CI).
+Generated configuration disables CLI-managed updates while preserving unrelated
+settings. The pinned container image remains the update boundary: rerun the
+generator or rebuild against a newer ref to update a CLI.
 
-**Keep durable secrets encrypted at rest.** Run `./claude.sh keys init` (then
-`keys edit`) — same subcommands on `codex.sh` — to move your secret `KEY=VALUE`
-(ex. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) lines out of `.env` into a
-gpg-encrypted `.env.keys.gpg`. It's decrypted to memory only when a backend needs
-it - plaintext never touches disk to mitigate opportunistic disk
-scraping.
+Kiro supports interactive browser authentication persisted under `.kiro`; for
+headless use, set `KIRO_API_KEY` in `.env` and uncomment its explicit Compose
+mapping.
 
 ## Built to reduce supply-chain risk
 
@@ -150,6 +136,20 @@ scraping.
 image-digest workflow open PRs but never merge blindly: minor/patch only (never
 major), a 7-day supply-chain age gate, and the container must build with every
 feature flag on (`build.yml`) before merge.
+
+Kiro is a multi-artifact exception to ordinary single-pin updates. Renovate
+dates releases from exact `kiro-cli <semver>` Homebrew cask commits, then runs
+the narrowly allowlisted command below only after the age gate passes. The
+command downloads both official Linux artifacts and atomically replaces both
+hash records; Kiro updates never automerge.
+
+```bash
+./install.sh dependency-lock kiro <version>
+```
+
+The same dependency lock records the standalone AWS CLI signing key's path,
+fingerprint, and expiry. The monthly key-refresh workflow verifies a live AWS
+artifact before updating the armored key and lock metadata together.
 
 **VS Code extensions.** Those on [OpenVSX](https://open-vsx.org) are pinned to an
 exact version (`publisher.name@x.y.z`) and tracked by Renovate via a custom

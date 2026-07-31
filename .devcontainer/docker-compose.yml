@@ -4,7 +4,9 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
       args:
-        CLAUDECODE: "true"
+        CODEX: "true"
     entrypoint: sleep infinity
+    environment:
+      - CODEX_HOME=/app/.codex
     volumes:
       - ..:/app

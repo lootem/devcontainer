@@ -53,9 +53,18 @@ CLONE_LINE2='  || die "Failed to clone https://github.com/$REPO@$REF"'
 make_local_install() { # make_local_install -> prints path to a patched install.sh
   local patched="$PATCH_DIR/install.sh"
   grep -qF "$CLONE_LINE" "$REPO_ROOT/install.sh" \
-    || { echo "test.sh: install.sh's git clone line has changed — update CLONE_LINE in test.sh" >&2; exit 1; }
+    || { echo "test.sh: install.sh clone line changed" >&2; exit 1; }
   awk -v old1="$CLONE_LINE" -v old2="$CLONE_LINE2" -v root="$REPO_ROOT" '
-    $0 == old1 { getline nextline; if (nextline == old2) { print "cp -r \"" root "/.\" \"$SRC\" >/dev/null 2>&1 || die \"local copy failed\""; next } }
+    $0 == old1 {
+      getline nextline
+      if (nextline == old2) {
+        print "cp -r \"" root "/.devcontainer\" \"" root "/templates\" \"" root "/skills\" \"$SRC/\" >/dev/null 2>&1 || die \"local copy failed\""
+        print "cp \"" root "/.env.example\" \"$SRC/.env.example\" >/dev/null 2>&1 || die \"local copy failed\""
+        print "cp \"" root "/install.sh\" \"$SRC/install.sh\" >/dev/null 2>&1 || die \"local copy failed\""
+        print "git -C \"$SRC\" init -q && git -C \"$SRC\" add -A && git -C \"$SRC\" -c user.email=test@example.com -c user.name=test commit -qm fixture"
+        next
+      }
+    }
     { print }
   ' "$REPO_ROOT/install.sh" > "$patched"
   chmod +x "$patched"
@@ -126,20 +135,20 @@ EOF
   )
 }
 
-# update.sh --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
+# unified installer --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
 # for tests, swap that one line for a direct call to the patched local install.sh.
-UPDATE_CURL_LINE='curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"'
+INSTALL_UPDATE_CURL_LINE='curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/install.sh" | bash -s -- "${ARGS[@]}"'
 
-make_local_update() { # make_local_update <path-to-update.sh> -> patches it in place, prints its path
+patch_unified_installer_full() { # patch_unified_installer_full <path-to-unified installer> -> patches it in place, prints its path
   local src="$1"
-  grep -qF "$UPDATE_CURL_LINE" "$src" \
-    || { echo "test.sh: update.sh's curl line has changed — update UPDATE_CURL_LINE in test.sh" >&2; exit 1; }
-  # Patched in place (not copied elsewhere): update.sh locates its own repo
+  grep -qF "$INSTALL_UPDATE_CURL_LINE" "$src" \
+    || { echo "test.sh: unified installer's curl line has changed — update INSTALL_UPDATE_CURL_LINE in test.sh" >&2; exit 1; }
+  # Patched in place (not copied elsewhere): unified installer locates its own repo
   # root via its own path (BASH_SOURCE), so it must stay under .devcontainer/.
   # Compare on the whitespace-trimmed line: the curl call is indented inside
   # run_full(), so an exact "$0 == old" would never match and the test would
   # silently fall through to the *live* published install.sh over the network.
-  awk -v old="$UPDATE_CURL_LINE" -v install="$INSTALL" '
+  awk -v old="$INSTALL_UPDATE_CURL_LINE" -v install="$INSTALL" '
     { line=$0; sub(/^[[:space:]]+/,"",line) }
     line == old { print "  bash \"" install "\" \"${ARGS[@]}\""; next }
     { print }
@@ -149,20 +158,20 @@ make_local_update() { # make_local_update <path-to-update.sh> -> patches it in p
   printf '%s' "$src"
 }
 
-# Surgical update.sh (the default mode) fetches upstream files (repo-relative
+# Surgical unified installer (the default mode) fetches upstream files (repo-relative
 # paths: .devcontainer/Dockerfile, .devcontainer/devcontainer.json, and each
 # enabled language's templates/<lang>/extensions.json) via fetch_upstream()/
 # fetch_upstream_optional(); for tests, swap both functions' bodies for a `cp`
 # from a local fixture "upstream" repo-root dir instead.
-UPDATE_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <repo-relative-path> <dest>'
-UPDATE_FETCH_OPTIONAL_FUNC_START='fetch_upstream_optional() { # fetch_upstream_optional <repo-relative-path> <dest> -> 0 fetched, 1 not found'
+INSTALL_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <repo-relative-path> <dest>'
+INSTALL_FETCH_OPTIONAL_FUNC_START='fetch_upstream_optional() { # fetch_upstream_optional <repo-relative-path> <dest> -> 0 fetched, 1 not found'
 
-make_local_update_surgical() { # make_local_update_surgical <path-to-update.sh> <upstream-dir> -> patches it in place, prints its path
+patch_unified_installer_surgical() { # patch_unified_installer_surgical <path-to-unified installer> <upstream-dir> -> patches it in place, prints its path
   local src="$1" upstream_dir="$2"
-  grep -qF "$UPDATE_FETCH_FUNC_START" "$src" \
-    || { echo "test.sh: update.sh's fetch_upstream() signature has changed — update UPDATE_FETCH_FUNC_START in test.sh" >&2; exit 1; }
-  grep -qF "$UPDATE_FETCH_OPTIONAL_FUNC_START" "$src" \
-    || { echo "test.sh: update.sh's fetch_upstream_optional() signature has changed — update UPDATE_FETCH_OPTIONAL_FUNC_START in test.sh" >&2; exit 1; }
+  grep -qF "$INSTALL_FETCH_FUNC_START" "$src" \
+    || { echo "test.sh: unified installer's fetch_upstream() signature has changed — update INSTALL_FETCH_FUNC_START in test.sh" >&2; exit 1; }
+  grep -qF "$INSTALL_FETCH_OPTIONAL_FUNC_START" "$src" \
+    || { echo "test.sh: unified installer's fetch_upstream_optional() signature has changed — update INSTALL_FETCH_OPTIONAL_FUNC_START in test.sh" >&2; exit 1; }
   awk -v up="$upstream_dir" '
     /^fetch_upstream\(\) \{/ {
       print "fetch_upstream() { cp \"" up "/$1\" \"$2\"; }"
@@ -188,7 +197,6 @@ run_install() { # run_install <target> <args...>  -> runs patched install.sh non
 }
 
 # --- Assertion helpers ------------------------------------------------------------
-CURRENT_TEST=""
 CURRENT_TEST_FAILED=false
 
 ok()   { echo "  ok   - $1"; }
@@ -242,8 +250,6 @@ assert_eq() { # assert_eq <actual> <expected> <description>
 
 test_syntax() {
   bash -n "$REPO_ROOT/install.sh" && ok "install.sh parses" || fail "install.sh syntax error"
-  bash -n "$REPO_ROOT/claude.sh" && ok "claude.sh parses" || fail "claude.sh syntax error"
-  bash -n "$REPO_ROOT/codex.sh" && ok "codex.sh parses" || fail "codex.sh syntax error"
 }
 
 test_fresh_scaffold() {
@@ -256,6 +262,11 @@ test_fresh_scaffold() {
   assert_json_valid "$d/.devcontainer/devcontainer.json"
   assert_contains "$d/.gitignore" 'node_modules'
   assert_contains "$d/.gitignore" 'go.work'
+  assert_file_exists "$d/.devcontainer/install.sh"
+  [ -x "$d/.devcontainer/install.sh" ] && ok "generated installer is executable" || fail "generated installer is not executable"
+  [ ! -e "$d/.devcontainer/update.sh" ] && ok "standalone updater is absent" || fail "standalone updater still exists"
+  assert_json_has "$d/.devcontainer/scaffold.json" '.schemaVersion == 1 and .sourceRepository == "lootem/devcontainer" and .trackingRef == "main" and (.resolvedCommit | test("^[0-9a-f]{40}$")) and .generatorVersion == "1" and .languages == ["go", "js"] and .tools == [] and .clis == [] and .skills == false and .extensions == false' "scaffold metadata records desired state and provenance"
+  assert_json_missing "$d/.devcontainer/scaffold.json" 'has("target") or has("timestamp") or has("credentials")' "scaffold metadata excludes local and secret state"
 }
 
 test_extensions_default_off() {
@@ -315,7 +326,7 @@ test_tool_unknown_rejected() {
 
 test_vendor_script_excluded_from_skills_copy() {
   local d; d="$(new_dir)"
-  run_install "$d" --language go --skills --force
+  run_install "$d" --language go --cli claude --skills --force
   assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
   assert_file_not_exists "$d/.claude/skills/vendor-matt-pocock-skills.sh"
 }
@@ -424,37 +435,56 @@ EOF
   fi
 }
 
-test_update_script_shipped_and_executable() {
+test_unified_installer_shipped_and_executable() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
-  assert_file_exists "$d/.devcontainer/update.sh"
-  [ -x "$d/.devcontainer/update.sh" ] && ok "$d/.devcontainer/update.sh is executable" \
-    || fail "$d/.devcontainer/update.sh is not executable"
+  assert_file_exists "$d/.devcontainer/install.sh"
+  [ -x "$d/.devcontainer/install.sh" ] && ok "$d/.devcontainer/install.sh is executable" \
+    || fail "$d/.devcontainer/install.sh is not executable"
 }
 
-test_update_script_full_round_trip() {
+test_unified_installer_full_round_trip() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --tool awscli --force
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
 
-  local patched_update
-  patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
-  if ! ( cd "$d" && bash "$patched_update" --full -- --force ) >/tmp/test.sh.update.log 2>&1; then
-    echo "update.sh --full failed (see /tmp/test.sh.update.log):"
+  local patched_installer
+  patched_installer="$(patch_unified_installer_full "$d/.devcontainer/install.sh")"
+  if ! ( cd "$d" && bash "$patched_installer" update --full -- --force ) >/tmp/test.sh.update.log 2>&1; then
+    echo "unified installer --full failed (see /tmp/test.sh.update.log):"
     cat /tmp/test.sh.update.log
-    fail "update.sh --full ran successfully"
+    fail "unified installer --full ran successfully"
     return
   fi
-  ok "update.sh --full ran successfully"
+  ok "unified installer --full ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
-  # The default claude CLI selection must survive the ARG->--cli round-trip.
-  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
+  # No CLI selection must survive the ARG->--cli round-trip.
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" '      {}'
 }
 
-test_update_script_surgical_bumps_and_preserves_edits() {
+test_unified_installer_full_round_trip_kiro() {
+  local d patched_installer
+  d="$(new_dir)"
+  run_install "$d" --language go --cli kiro --force
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
+  patched_installer="$(patch_unified_installer_full "$d/.devcontainer/install.sh")"
+  if ! ( cd "$d" && bash "$patched_installer" update --full -- --force ) >/tmp/test.sh.update_kiro.log 2>&1; then
+    cat /tmp/test.sh.update_kiro.log
+    fail "unified installer --full preserves Kiro selection"
+    return
+  fi
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'KIRO_HOME: /app/.kiro'
+  assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro update setting survives full round-trip"
+}
+
+test_unified_installer_surgical_bumps_and_preserves_edits() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force --extensions
 
@@ -470,21 +500,22 @@ test_update_script_surgical_bumps_and_preserves_edits() {
   local up; up="$(new_dir)"
   mkdir -p "$up/.devcontainer" "$up/templates/go"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/install.sh" "$up/install.sh"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   cp "$REPO_ROOT/templates/go/extensions.json" "$up/templates/go/extensions.json"
   sed -i -E 's/ARG CLAUDE_VER=[0-9.]+/ARG CLAUDE_VER=9.9.999/' "$up/.devcontainer/Dockerfile"
   sed -i -E 's/ms-azuretools\.vscode-containers@[0-9.]+/ms-azuretools.vscode-containers@9.9.9/' "$up/.devcontainer/devcontainer.json"
   sed -i -E 's/golang\.go@[0-9.]+/golang.go@9.9.9/' "$up/templates/go/extensions.json"
 
-  local patched_update
-  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
-  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical.log 2>&1; then
-    echo "surgical update.sh failed (see /tmp/test.sh.surgical.log):"
+  local patched_installer
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_installer" update ) >/tmp/test.sh.surgical.log 2>&1; then
+    echo "surgical unified installer failed (see /tmp/test.sh.surgical.log):"
     cat /tmp/test.sh.surgical.log
-    fail "surgical update.sh ran successfully"
+    fail "surgical unified installer ran successfully"
     return
   fi
-  ok "surgical update.sh ran successfully"
+  ok "surgical unified installer ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDE_VER=9.9.999'
   assert_contains "$d/.devcontainer/devcontainer.json" 'ms-azuretools.vscode-containers@9.9.9'
@@ -495,7 +526,7 @@ test_update_script_surgical_bumps_and_preserves_edits() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
 }
 
-test_update_script_surgical_skip_summary() {
+test_unified_installer_surgical_skip_summary() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
 
@@ -504,6 +535,7 @@ test_update_script_surgical_skip_summary() {
   local up; up="$(new_dir)"
   mkdir -p "$up/.devcontainer"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/install.sh" "$up/install.sh"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   awk '/# renovate:.*depName=golang\.org\/x\/tools\/gopls/ { getline; next } { print }' \
     "$up/.devcontainer/Dockerfile" > "$up/.devcontainer/Dockerfile.tmp"
@@ -513,20 +545,20 @@ test_update_script_surgical_skip_summary() {
     echo 'ARG TOTALLY_NEW_VER=1.0.0'
   } >> "$up/.devcontainer/Dockerfile"
 
-  local patched_update out
-  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
-  if ! out="$(cd "$d" && bash "$patched_update" 2>&1)"; then
+  local patched_installer out
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if ! out="$(cd "$d" && bash "$patched_installer" update 2>&1)"; then
     echo "$out"
-    fail "surgical update.sh (skip summary) ran successfully"
+    fail "surgical unified installer (skip summary) ran successfully"
     return
   fi
-  ok "surgical update.sh (skip summary) ran successfully"
+  ok "surgical unified installer (skip summary) ran successfully"
 
   assert_contains <(printf '%s' "$out") "skipped (local-only, no matching upstream key): ARG GOPLS_VER"
-  assert_contains <(printf '%s' "$out") "skipped (upstream-only, run --full to adopt): ARG TOTALLY_NEW_VER"
+  assert_contains <(printf '%s' "$out") "skipped (upstream-only, run install.sh update --full to adopt): ARG TOTALLY_NEW_VER"
 }
 
-test_update_script_surgical_transplants_keys() {
+test_unified_installer_surgical_transplants_keys() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --tool awscli --force
 
@@ -535,8 +567,17 @@ test_update_script_surgical_transplants_keys() {
   local up; up="$(new_dir)"
   mkdir -p "$up/.devcontainer"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/install.sh" "$up/install.sh"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   cp "$REPO_ROOT/.devcontainer/awscli.pub" "$up/.devcontainer/awscli.pub"
+  cp "$REPO_ROOT/.devcontainer/dependencies.lock.json" "$up/.devcontainer/dependencies.lock.json"
+  jq '
+    .kiro.amd64.version = "9.9.9"
+    | .kiro.arm64.version = "9.9.9"
+    | .kiro.amd64.sha256 = ("a" * 64)
+    | .kiro.arm64.sha256 = ("b" * 64)
+  ' "$up/.devcontainer/dependencies.lock.json" > "$up/.devcontainer/dependencies.lock.json.tmp"
+  mv "$up/.devcontainer/dependencies.lock.json.tmp" "$up/.devcontainer/dependencies.lock.json"
   sed -i 's/ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF/ARG MS_KEY_FP=DEADBEEF0000000000000000000000000000000A/' \
     "$up/.devcontainer/Dockerfile"
   sed -i 's/ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B/ARG MS_KEY_FP_2025=DEADBEEF0000000000000000000000000000000B/' \
@@ -547,21 +588,27 @@ test_update_script_surgical_transplants_keys() {
     "$up/.devcontainer/Dockerfile"
   echo "# upstream-added trailer" >> "$up/.devcontainer/awscli.pub"
 
-  local patched_update
-  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
-  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical_keys.log 2>&1; then
-    echo "surgical update.sh (key transplant) failed (see /tmp/test.sh.surgical_keys.log):"
+  local patched_installer
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_installer" update ) >/tmp/test.sh.surgical_keys.log 2>&1; then
+    echo "surgical unified installer (key transplant) failed (see /tmp/test.sh.surgical_keys.log):"
     cat /tmp/test.sh.surgical_keys.log
-    fail "surgical update.sh (key transplant) ran successfully"
+    fail "surgical unified installer (key transplant) ran successfully"
     return
   fi
-  ok "surgical update.sh (key transplant) ran successfully"
+  ok "surgical unified installer (key transplant) ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG MS_KEY_FP=DEADBEEF0000000000000000000000000000000A'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG MS_KEY_FP_2025=DEADBEEF0000000000000000000000000000000B'
   assert_contains "$d/.devcontainer/Dockerfile" 'EXPECTED="1111111111111111111111111111111111111C"'
   assert_contains "$d/.devcontainer/Dockerfile" 'EXPECTED="2222222222222222222222222222222222222D"'
   assert_contains "$d/.devcontainer/awscli.pub" '# upstream-added trailer'
+  assert_json_has "$d/.devcontainer/dependencies.lock.json" '
+    .kiro.amd64.version == "9.9.9"
+    and .kiro.arm64.version == "9.9.9"
+    and .kiro.amd64.sha256 == ("a" * 64)
+    and .kiro.arm64.sha256 == ("b" * 64)
+  ' "surgical update transplants the grouped dependency lock"
 
   # No cross-contamination: each new EXPECTED value appears exactly once (a
   # file-wide, unscoped replace would have let one clobber the other).
@@ -576,11 +623,41 @@ test_update_script_surgical_transplants_keys() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
 }
 
-test_update_script_help_mentions_full_and_repo() {
+test_unified_installer_help_mentions_full_and_repo() {
   local out
-  out="$(bash "$REPO_ROOT/.devcontainer/update.sh" --help)"
+  out="$(bash "$REPO_ROOT/install.sh" update --help)"
   assert_contains <(printf '%s' "$out") "--full"
   assert_contains <(printf '%s' "$out") "--repo <o/r>"
+}
+
+test_unified_installer_stops_on_feature_drift() {
+  local d out; d="$(new_dir)"
+  run_install "$d" --language go --force
+  sed -i 's/^ARG GOLANG=true/ARG GOLANG=false/' "$d/.devcontainer/Dockerfile"
+  if out="$(bash "$d/.devcontainer/install.sh" update 2>&1)"; then fail "update should stop on feature drift"; else assert_contains <(printf '%s' "$out") "differs from scaffold.json"; fi
+}
+
+test_unified_installer_full_removes_cli_but_retains_state() {
+  local d patched_installer out; d="$(new_dir)"
+  run_install "$d" --language go --cli kiro --force
+  echo retained > "$d/.kiro/history.txt"
+  patched_installer="$(patch_unified_installer_full "$d/.devcontainer/install.sh")"
+  out="$(cd "$d" && bash "$patched_installer" update --full --no-cli --force 2>&1)" || { echo "$out"; fail "full update removes CLI"; return; }
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=false'
+  assert_file_exists "$d/.kiro/history.txt"
+  assert_contains <(printf '%s' "$out") "retained $d/.kiro"
+  assert_json_has "$d/.devcontainer/scaffold.json" '.clis == []' "metadata records CLI removal"
+}
+
+test_unified_installer_failed_migration_is_atomic() {
+  local d up before out patched_installer; d="$(new_dir)"; up="$(new_dir)"
+  run_install "$d" --language go --force
+  jq '.schemaVersion = 0 | del(.generatorVersion)' "$d/.devcontainer/scaffold.json" > "$d/.devcontainer/scaffold.json.tmp"; mv "$d/.devcontainer/scaffold.json.tmp" "$d/.devcontainer/scaffold.json"
+  before="$(sha256sum "$d/.devcontainer/scaffold.json" | awk '{print $1}')"
+  mkdir -p "$up/.devcontainer"; cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"; cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"; printf 'if then\n' > "$up/install.sh"
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if out="$(cd "$d" && bash "$patched_installer" update 2>&1)"; then fail "invalid candidate should fail update"; else assert_contains <(printf '%s' "$out") "failed validation"; fi
+  assert_eq "$(sha256sum "$d/.devcontainer/scaffold.json" | awk '{print $1}')" "$before" "failed update leaves pre-migration metadata unchanged"
 }
 
 test_verbatim_extras() {
@@ -593,7 +670,7 @@ test_verbatim_extras() {
 test_generated_compose_has_no_build_args() {
   # Generated projects bake their CLI choice into the copied Dockerfile's ARG
   # defaults, so the shipped docker-compose.yml must carry NO build args — else
-  # maintainer args (CLAUDECODE/CODEX) would leak in and force both CLIs on.
+  # maintainer args would leak in and force extra CLIs on.
   local d; d="$(new_dir)"
   run_install "$d" --cli codex --language go --force
   assert_file_exists "$d/.devcontainer/docker-compose.yml"
@@ -605,146 +682,30 @@ test_generated_compose_has_no_build_args() {
   # Codex-only selection must not have been overridden by leaked CLAUDECODE args.
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
 
-  # The repo's own compose SHOULD equip the maintainer container with both CLIs.
-  assert_contains "$REPO_ROOT/.devcontainer/docker-compose.yml" 'CLAUDECODE: "true"'
+  # The repo's own compose equips the maintainer container with Codex only.
   assert_contains "$REPO_ROOT/.devcontainer/docker-compose.yml" 'CODEX: "true"'
+  if grep -qE '^\s*(CLAUDECODE|OPENCODE):' "$REPO_ROOT/.devcontainer/docker-compose.yml"; then
+    fail "maintainer compose enables an AI CLI other than Codex"
+  else
+    ok "maintainer compose enables Codex only"
+  fi
 }
 
 test_gitignore_secrets() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
-  assert_contains "$d/.gitignore" ".env.keys"
-  assert_contains "$d/.gitignore" ".env.keys.gpg"
-}
-
-test_keys_init_migrates_and_encrypts() {
-  local d; d="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
-
-  # Auto-detected ANTHROPIC_API_KEY needs no retyping; type AWS_ACCESS_KEY_ID
-  # by hand (its name doesn't match the TOKEN/API_KEY auto-detect pattern),
-  # blank line to finish, then passphrase twice.
-  if ! ( cd "$d" && printf 'AWS_ACCESS_KEY_ID=AKIA123\n\ntestpass\ntestpass\n' | ./claude.sh keys init ) \
-      >/tmp/test.sh.keys_init.log 2>&1; then
-    fail "claude.sh keys init failed (see /tmp/test.sh.keys_init.log)"
-    cat /tmp/test.sh.keys_init.log
-    return
-  fi
-
-  assert_file_exists "$d/.env.keys.gpg"
-  assert_file_not_exists "$d/.env.keys"
-  if grep -q '^ANTHROPIC_API_KEY=' "$d/.env" 2>/dev/null; then
-    fail "$d/.env still contains ANTHROPIC_API_KEY (secret not migrated out)"
+  assert_contains "$d/.gitignore" ".env"
+  if grep -qF ".env.keys" "$d/.gitignore"; then
+    fail "generated .gitignore retains obsolete encrypted-key entries"
   else
-    ok "$d/.env no longer contains ANTHROPIC_API_KEY"
+    ok "generated .gitignore omits obsolete encrypted-key entries"
   fi
-
-  local decrypted
-  decrypted="$(cd "$d" && printf 'testpass\n' | gpg --batch --yes --passphrase-fd 0 --decrypt .env.keys.gpg 2>/dev/null)"
-  assert_contains <(printf '%s' "$decrypted") "AWS_ACCESS_KEY_ID=AKIA123"
-}
-
-test_keys_init_no_plaintext_on_gpg_failure() {
-  local d; d="$(new_dir)"
-  local tmpdir; tmpdir="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  mkdir -p "$d/readonly"
-  chmod 500 "$d/readonly"
-
-  if ( cd "$d" && TMPDIR="$tmpdir" KEYS_GPG="$d/readonly/.env.keys.gpg" \
-       bash -c "printf 'ANTHROPIC_API_KEY=sk-x\n\ntestpass\ntestpass\n' | ./claude.sh keys init" ) \
-      >/tmp/test.sh.keys_init_gpgfail.log 2>&1; then
-    fail "claude.sh keys init should fail when gpg can't write its output"
-  else
-    ok "claude.sh keys init fails cleanly when gpg can't write its output"
-  fi
-  chmod 700 "$d/readonly"
-
-  assert_file_not_exists "$d/readonly/.env.keys.gpg"
-  if [ -z "$(ls -A "$tmpdir" 2>/dev/null)" ]; then
-    ok "no leftover plaintext temp files after gpg failure"
-  else
-    fail "leftover temp files after gpg failure: $(ls -A "$tmpdir")"
-  fi
-}
-
-test_keys_edit_no_plaintext_on_gpg_failure() {
-  local d; d="$(new_dir)"
-  local tmpdir; tmpdir="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  mkdir -p "$d/keys"
-  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
-  ( cd "$d" && KEYS_GPG="$d/keys/.env.keys.gpg" \
-    bash -c "printf '\ntestpass\ntestpass\n' | ./claude.sh keys init" ) >/dev/null 2>&1
-
-  # Read-only *directory* (not the file): gpg can still decrypt the existing
-  # keys file (r-x traversal), but the atomic re-encrypt can't create its temp
-  # in that dir, so the write fails and the original file must survive. (A
-  # read-only file alone wouldn't test this: the temp+rename write replaces the
-  # directory entry, which a writable dir permits regardless of file mode.)
-  chmod 500 "$d/keys"
-  if ( cd "$d" && TMPDIR="$tmpdir" KEYS_GPG="$d/keys/.env.keys.gpg" \
-       bash -c "printf 'testpass\nANTHROPIC_API_KEY=sk-changed\n\n' | ./claude.sh keys edit" ) \
-      >/tmp/test.sh.keys_edit_gpgfail.log 2>&1; then
-    fail "claude.sh keys edit should fail when gpg can't write its output"
-  else
-    ok "claude.sh keys edit fails cleanly when gpg can't write its output"
-  fi
-  chmod 700 "$d/keys"
-
-  if [ -z "$(ls -A "$tmpdir" 2>/dev/null)" ]; then
-    ok "no leftover plaintext temp files after gpg failure"
-  else
-    fail "leftover temp files after gpg failure: $(ls -A "$tmpdir")"
-  fi
-
-  local decrypted
-  decrypted="$(printf 'testpass\n' | gpg --batch --yes --passphrase-fd 0 --decrypt "$d/keys/.env.keys.gpg" 2>/dev/null)"
-  assert_contains <(printf '%s' "$decrypted") "ANTHROPIC_API_KEY=sk-test-abc"
-}
-
-test_api_mode_decrypts_keys() {
-  local d; d="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  mkdir -p "$d/bin"
-  cat > "$d/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
-EOF
-  chmod +x "$d/bin/claude"
-  echo "ANTHROPIC_API_KEY=sk-test-xyz" > "$d/.env"
-  ( cd "$d" && printf '\ntestpass\ntestpass\n' | ./claude.sh keys init ) >/dev/null 2>&1
-
-  ( cd "$d" && printf 'testpass\n' | PATH="$d/bin:$PATH" ./claude.sh api ) \
-    >/tmp/test.sh.api_mode.log 2>&1
-  assert_contains /tmp/test.sh.api_mode.log "ANTHROPIC_API_KEY=sk-test-xyz"
-}
-
-test_codex_installed_and_executable() {
-  local d; d="$(new_dir)"
-  run_install "$d" --cli codex --language go --force
-  assert_file_exists "$d/codex.sh"
-  [ -x "$d/codex.sh" ] && ok "installed codex.sh is executable" || fail "installed codex.sh is not executable"
-}
-
-test_cli_default_installs_claude() {
-  local d; d="$(new_dir)"
-  run_install "$d" --language go --force   # no --cli -> claude default
-  assert_file_exists "$d/claude.sh"
-  assert_file_not_exists "$d/codex.sh"
-  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
-  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
 }
 
 test_cli_codex_only() {
   local d; d="$(new_dir)"
   run_install "$d" --cli codex --language go --skills --force
-  assert_file_exists "$d/codex.sh"
+  assert_file_not_exists "$d/codex.sh"
   assert_file_not_exists "$d/claude.sh"
   assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
   assert_file_not_exists "$d/.claude/skills/code-review/SKILL.md"
@@ -752,17 +713,292 @@ test_cli_codex_only() {
   assert_file_not_exists "$d/.agents/skills/vendor-matt-pocock-skills.sh"
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
+  assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
+  assert_contains "$d/.codex/config.toml" '[model_providers.azure]'
+  assert_contains "$d/.codex/config.toml" 'env_key = "AZURE_OPENAI_API_KEY"'
+  assert_contains "$d/.codex/config.toml" 'query_params = { api-version = "2025-04-01-preview" }'
+}
+
+test_cli_claude_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli claude --language go --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CLAUDE_CONFIG_DIR: /app/.claude'
+  assert_json_has "$d/.claude/settings.json" '.autoUpdates == false' "Claude native updates disabled"
 }
 
 test_cli_both_skills_both_dirs() {
   local d; d="$(new_dir)"
   run_install "$d" --cli claude,codex --language go --skills --force
-  assert_file_exists "$d/claude.sh"
-  assert_file_exists "$d/codex.sh"
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
   assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
   assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
+}
+
+test_cli_opencode_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli opencode --language go --skills --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_file_exists "$d/.opencode/skills/code-review/SKILL.md"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'registry.npmjs.org/${NPM_PKG}/${OPENCODE_VER}'
+  assert_contains "$d/.devcontainer/Dockerfile" 'sha512sum -c -'
+  assert_contains "$d/.devcontainer/Dockerfile" 'package/bin/opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG_DIR: /app/.opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" '../.opencode/data:/home/vscode/.local/share/opencode'
+  assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode native updates disabled"
+}
+
+test_cli_kiro_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli kiro --language go --skills --force
+  assert_file_exists "$d/.kiro/skills/code-review/SKILL.md"
+  assert_file_exists "$d/.devcontainer/dependencies.lock.json"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'KIRO_HOME: /app/.kiro'
+  assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro background auto-updates disabled"
+  assert_contains "$d/.gitignore" '.kiro/*'
+  assert_contains "$d/.gitignore" '!.kiro/skills/'
+}
+
+test_cli_none_is_native_and_empty() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=false'
+  if grep -qE '^[[:space:]]+(CLAUDE_CONFIG_DIR|CODEX_HOME|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR|KIRO_HOME):' \
+      "$d/.devcontainer/docker-compose.yml"; then
+    fail "no-CLI scaffold has active CLI state configuration"
+  else
+    ok "no-CLI scaffold has no active CLI state configuration"
+  fi
+}
+
+test_cli_native_compose_configuration() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli claude,codex,opencode,kiro --language go --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CLAUDE_CONFIG_DIR: /app/.claude'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'DISABLE_AUTOUPDATER: "1"'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG: /app/.opencode/opencode.json'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG_DIR: /app/.opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_DISABLE_AUTOUPDATE: "1"'
+  assert_contains "$d/.devcontainer/docker-compose.yml" '../.opencode/data:/home/vscode/.local/share/opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'KIRO_HOME: /app/.kiro'
+  if grep -qE '^[[:space:]]+XDG_DATA_HOME:' "$d/.devcontainer/docker-compose.yml"; then
+    fail "generated compose changes XDG_DATA_HOME globally"
+  else
+    ok "generated compose leaves XDG_DATA_HOME unchanged"
+  fi
+}
+
+test_kiro_dependency_lock_contract() {
+  local lock="$REPO_ROOT/.devcontainer/dependencies.lock.json"
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  assert_json_valid "$lock"
+  assert_json_has "$lock" '.schemaVersion == 1' "dependency lock schema version"
+  assert_json_has "$lock" '
+    (.kiro.amd64.version == .kiro.arm64.version)
+    and (.kiro.amd64.url | test("/[0-9]+\\.[0-9]+\\.[0-9]+/kirocli-x86_64-linux\\.tar\\.xz$"))
+    and (.kiro.arm64.url | test("/[0-9]+\\.[0-9]+\\.[0-9]+/kirocli-aarch64-linux\\.tar\\.xz$"))
+    and (.kiro.amd64.sha256 | test("^[0-9a-f]{64}$"))
+    and (.kiro.arm64.sha256 | test("^[0-9a-f]{64}$"))
+  ' "Kiro has matching versioned amd64/arm64 tar.xz records with SHA-256"
+  assert_json_has "$lock" '
+    .awscli.signingKey.path == ".devcontainer/awscli.pub"
+    and .awscli.signingKey.fingerprint == "FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
+    and (.awscli.signingKey.expires | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+  ' "AWS CLI signing-key metadata registered"
+  assert_contains "$dockerfile" 'source=.devcontainer/dependencies.lock.json'
+  assert_contains "$dockerfile" 'Unsupported Kiro architecture'
+  assert_contains "$dockerfile" '.kiro.amd64.url'
+  assert_contains "$dockerfile" '.kiro.arm64.url'
+  assert_contains "$dockerfile" '.kiro.amd64.sha256'
+  assert_contains "$dockerfile" '.kiro.arm64.sha256'
+  assert_contains "$dockerfile" 'sha256sum -c -'
+  assert_contains "$dockerfile" 'tar -xJf'
+}
+
+test_kiro_dependency_lock_command_is_atomic() {
+  local root fixtures lock before out
+  root="$(new_dir)"
+  fixtures="$(new_dir)"
+  mkdir -p "$root/.devcontainer" "$fixtures/9.8.7"
+  cp "$REPO_ROOT/install.sh" "$root/install.sh"
+  cp "$REPO_ROOT/.devcontainer/dependencies.lock.json" "$root/.devcontainer/dependencies.lock.json"
+  printf 'amd64 fixture\n' > "$fixtures/9.8.7/kirocli-x86_64-linux.tar.xz"
+  printf 'arm64 fixture\n' > "$fixtures/9.8.7/kirocli-aarch64-linux.tar.xz"
+
+  (
+    cd "$root"
+    KIRO_DOWNLOAD_BASE_URL="file://$fixtures" bash ./install.sh dependency-lock kiro 9.8.7
+  ) >"$root/lock.log" 2>&1 || {
+    cat "$root/lock.log"
+    fail "dependency-lock command updates both Kiro records"
+    return
+  }
+  lock="$root/.devcontainer/dependencies.lock.json"
+  assert_json_has "$lock" '
+    .kiro.amd64.version == "9.8.7"
+    and .kiro.arm64.version == "9.8.7"
+    and .kiro.amd64.sha256 == "c62de6e3b306ad3a6d93b3dd9b5a2c781dee4350573814f59838116ff5bcf817"
+    and .kiro.arm64.sha256 == "791986e14fcaeedc7e87a870f0a6cff9a7b1eaf47d73c7b87d3987695a4f9819"
+  ' "dependency-lock command hashes and groups both architectures"
+
+  before="$(sha256sum "$lock" | cut -d' ' -f1)"
+  mkdir -p "$fixtures/9.8.8"
+  printf 'amd64 replacement\n' > "$fixtures/9.8.8/kirocli-x86_64-linux.tar.xz"
+  if out="$(
+    cd "$root"
+    KIRO_DOWNLOAD_BASE_URL="file://$fixtures" bash ./install.sh dependency-lock kiro 9.8.8 2>&1
+  )"; then
+    fail "dependency-lock command should fail when one architecture is unavailable"
+  else
+    ok "dependency-lock command fails when one architecture is unavailable"
+  fi
+  assert_contains <(printf '%s' "$out") "arm64"
+  assert_eq "$(sha256sum "$lock" | cut -d' ' -f1)" "$before" "failed lock update leaves the existing lock byte-identical"
+}
+
+test_kiro_renovate_contract() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  local global="$REPO_ROOT/.github/renovate-global.json5"
+  assert_contains "$renovate" '^kiro-cli [0-9]+\\.[0-9]+\\.[0-9]+$'
+  assert_contains "$renovate" 'commit.message'
+  assert_contains "$renovate" 'commit.committer.date'
+  assert_contains "$renovate" './install.sh dependency-lock kiro {{{newValue}}}'
+  assert_contains "$renovate" 'automerge: false'
+  assert_contains "$global" 'allowedCommands'
+  assert_contains "$global" '^\\./install\\.sh dependency-lock kiro [0-9]+\\.[0-9]+\\.[0-9]+$'
+}
+
+test_kiro_build_validation_contract() {
+  local wf="$REPO_ROOT/.github/workflows/build.yml"
+  assert_contains "$wf" '.devcontainer/dependencies.lock.json'
+  assert_contains "$wf" 'KIRO=true'
+  assert_contains "$wf" 'kiro-changing'
+  assert_contains "$wf" 'install\.sh'
+  assert_contains "$wf" 'renovate\.json5'
+  assert_contains "$wf" 'schedule:'
+}
+
+test_dockerhub_publishing_is_retired() {
+  local wf="$REPO_ROOT/.github/workflows/build.yml"
+  if grep -RqiE "dockerhub|lootemsec/devcontainer|push-by-digest|imagetools create" "$REPO_ROOT/.github/workflows" "$REPO_ROOT/README.md"; then
+    fail "Docker Hub publishing or pull instructions remain"
+  else
+    ok "Docker Hub publishing and pull instructions are absent"
+  fi
+  assert_contains "$wf" "if: needs.detect.outputs.dockerfile == 'true'"
+  assert_contains "$wf" "push: false"
+}
+
+test_provider_mappings_are_explicit_and_commented() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+  local var
+  for var in \
+    ANTHROPIC_API_KEY CLAUDE_CODE_USE_BEDROCK AWS_REGION AWS_PROFILE \
+    AWS_BEARER_TOKEN_BEDROCK AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+    AWS_SESSION_TOKEN CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_FOUNDRY_RESOURCE \
+    ANTHROPIC_FOUNDRY_API_KEY OPENAI_API_KEY AZURE_OPENAI_API_KEY \
+    AZURE_RESOURCE_NAME KIRO_API_KEY; do
+    assert_contains "$d/.devcontainer/docker-compose.yml" "# $var: \${$var:-}"
+    assert_contains "$d/.env.example" "$var="
+  done
+  if grep -qE '^[[:space:]]+env_file:' "$d/.devcontainer/docker-compose.yml"; then
+    fail "generated compose injects .env wholesale"
+  else
+    ok "generated compose does not inject .env wholesale"
+  fi
+}
+
+test_native_config_merge_preserves_unrelated_keys() {
+  local d; d="$(new_dir)"
+  mkdir -p "$d/.claude" "$d/.codex" "$d/.opencode" "$d/.kiro/settings"
+  printf '{"permissions":{"allow":["Bash(git status)"]}}\n' > "$d/.claude/settings.json"
+  printf 'model = "gpt-test"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
+  printf '{"model":"anthropic/test"}\n' > "$d/.opencode/opencode.json"
+  printf '{"chat":{"greeting":{"enabled":false}}}\n' > "$d/.kiro/settings/cli.json"
+  run_install "$d" --cli claude,codex,opencode,kiro --language go --force
+  assert_json_has "$d/.claude/settings.json" '.autoUpdates == false' "Claude auto-updates disabled"
+  assert_json_has "$d/.claude/settings.json" '.permissions.allow[0] == "Bash(git status)"' "Claude config preserved"
+  assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
+  assert_count "$d/.codex/config.toml" 'check_for_update_on_startup = false' 1
+  assert_contains "$d/.codex/config.toml" 'model = "gpt-test"'
+  assert_contains "$d/.codex/config.toml" '[history]'
+  assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode auto-updates disabled"
+  assert_json_has "$d/.opencode/opencode.json" '.model == "anthropic/test"' "OpenCode config preserved"
+  assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro auto-updates disabled"
+  assert_json_has "$d/.kiro/settings/cli.json" '.chat.greeting.enabled == false' "Kiro config preserved"
+}
+
+test_cli_deselection_removes_active_config_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli codex,opencode --language go --force
+  mkdir -p "$d/.opencode/data"
+  printf 'credential-state\n' > "$d/.codex/auth.json"
+  printf 'connect-state\n' > "$d/.opencode/data/auth.json"
+  printf '\n# user compose customization\n' >> "$d/.devcontainer/docker-compose.yml"
+  run_install "$d" --language go
+  if grep -qE '^[[:space:]]+(CODEX_HOME|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR):' \
+      "$d/.devcontainer/docker-compose.yml"; then
+    fail "deselected CLI remains active in compose"
+  else
+    ok "deselected CLI active compose configuration removed"
+  fi
+  assert_file_exists "$d/.codex/auth.json"
+  assert_file_exists "$d/.opencode/data/auth.json"
+  assert_contains "$d/.devcontainer/docker-compose.yml" '# user compose customization'
+}
+
+test_skills_without_cli_fails_early() {
+  local d out
+  d="$(new_dir)"
+  if out="$(run_install "$d" --language go --skills --force 2>&1)"; then
+    fail "--skills without --cli should fail"
+  else
+    ok "--skills without --cli fails"
+  fi
+  assert_contains <(printf '%s' "$out") "--skills requires at least one --cli"
+  if printf '%s' "$out" | grep -qF "Cloning"; then
+    fail "--skills validation happened after cloning"
+  else
+    ok "--skills validation happens before cloning"
+  fi
+}
+
+test_interactive_blank_cli_selects_none() {
+  if ! command -v script >/dev/null 2>&1; then
+    echo "  skip - script not installed"
+    return
+  fi
+  local d out
+  d="$(new_dir)"
+  out="$(printf 'go\n\nn\n' | script -qec "bash '$INSTALL' --target '$d' --force" /dev/null 2>&1)"
+  assert_contains <(printf '%s' "$out") "AI CLIs (comma-separated, blank for none):"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
 }
 
 test_cli_unknown_rejected() {
@@ -782,27 +1018,6 @@ test_cli_codex_not_a_tool() {
   else
     ok "install.sh rejects 'codex' as a --tool (moved to --cli)"
   fi
-}
-
-test_codex_api_mode_decrypts_keys() {
-  local d; d="$(new_dir)"
-  cp "$REPO_ROOT/codex.sh" "$d/codex.sh"
-  chmod +x "$d/codex.sh"
-  mkdir -p "$d/bin"
-  # Stub codex: echo the resolved key so we can confirm it was decrypted+exported.
-  cat > "$d/bin/codex" <<'EOF'
-#!/usr/bin/env bash
-echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
-EOF
-  chmod +x "$d/bin/codex"
-  echo "OPENAI_API_KEY=sk-codex-xyz" > "$d/.env"
-  ( cd "$d" && printf '\ntestpass\ntestpass\n' | ./codex.sh keys init ) >/dev/null 2>&1
-
-  # No plaintext markers left in .env (migrated out) + a keys file present ->
-  # api fallback should decrypt OPENAI_API_KEY and hand it to codex.
-  ( cd "$d" && printf 'testpass\n' | PATH="$d/bin:$PATH" ./codex.sh ) \
-    >/tmp/test.sh.codex_api_mode.log 2>&1
-  assert_contains /tmp/test.sh.codex_api_mode.log "OPENAI_API_KEY=sk-codex-xyz"
 }
 
 test_renovate_regex_covers_pins() {
@@ -909,7 +1124,7 @@ test_extensions_no_duplicate_canonical() {
 
 test_token_set_matches_dockerfile_args() {
   # install.sh's --language/--tool/--cli tokens must cover every ARG the
-  # Dockerfile can toggle 1:1, or update.sh's ARG->token round-trip silently
+  # Dockerfile can toggle 1:1, or unified installer's ARG->token round-trip silently
   # drops a feature (e.g. a hand-added CLI ARG with no corresponding flag).
   local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
   local install="$REPO_ROOT/install.sh"
@@ -929,7 +1144,7 @@ test_token_set_matches_dockerfile_args() {
     if echo "$mapped_args" | grep -qxF "$a"; then
       ok "install.sh has a --language/--tool/--cli token for Dockerfile ARG $a"
     else
-      fail "Dockerfile ARG $a has no --language/--tool/--cli token (update.sh round-trip would drop it)"
+      fail "Dockerfile ARG $a has no --language/--tool/--cli token (unified installer round-trip would drop it)"
       missing=$((missing+1))
     fi
   done <<< "$dockerfile_args"
@@ -957,7 +1172,10 @@ test_ask_yn_all_sticks_across_subshell() {
     local first="$1"
     (
       eval "$harness"
+      # Referenced by ask_yn loaded dynamically above.
+      # shellcheck disable=SC2034
       FORCE=false
+      # shellcheck disable=SC2034
       HAVE_TTY=true
       ANSWER_ALL_FILE="$(mktemp)"
       local calls; calls="$(mktemp)"; echo 0 > "$calls"
@@ -986,7 +1204,7 @@ test_empty_array_expansions_guarded() {
   # at use (blank language prompt, no --tool, no `-- <args>`), so EVERY
   # "${NAME[@]}" expansion — for-loop, append, or command args — must use the
   # ${NAME[@]+"${NAME[@]}"} guard, which expands to nothing when empty.
-  local scripts=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh")
+  local scripts=("$REPO_ROOT/install.sh")
   local bad=0 f names name hits
   for f in "${scripts[@]}"; do
     names="$(grep -oE '^[[:space:]]*[A-Za-z_]+=\(\)' "$f" | sed -E 's/^[[:space:]]*//; s/=\(\)//')"
@@ -997,6 +1215,8 @@ test_empty_array_expansions_guarded() {
       # '+', so it's excluded; ${#NAME[@]}, ${NAME[*]} and ${NAME[@]:-} never match.
       hits="$(grep -nE "[^+]\"\\\$\\{${name}\\[@\\]\\}\"" "$f" || true)"
       if [ -n "$hits" ]; then
+        # Deliberately prints the invalid source pattern detected by this test.
+        # shellcheck disable=SC1087
         fail "$(basename "$f"): bare \"\${$name[@]}\" crashes on bash 3.2 — use \${$name[@]+\"\${$name[@]}\"}: $hits"
         bad=$((bad+1))
       fi
@@ -1009,7 +1229,7 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/codex.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -1028,7 +1248,7 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/codex.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+  shellcheck -S warning "$REPO_ROOT/install.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
@@ -1085,6 +1305,16 @@ test_ms_key_refresh_workflow_no_automerge() {
   fi
 }
 
+test_aws_key_refresh_updates_lock_atomically() {
+  local wf="$REPO_ROOT/.github/workflows/awscli-key-refresh.yml"
+  assert_file_exists "$wf"
+  assert_contains "$wf" 'LOCK_FILE: .devcontainer/dependencies.lock.json'
+  assert_contains "$wf" '.awscli.signingKey.fingerprint'
+  assert_contains "$wf" '.awscli.signingKey.expires'
+  assert_contains "$wf" 'mv "$LOCK_TMP" "$LOCK_FILE"'
+  assert_contains "$wf" 'gpg --verify a.sig a.zip'
+}
+
 test_gitignore_merge() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -1139,27 +1369,40 @@ TESTS=(
   test_no_pcre_grep_in_shipped_scripts
   test_ms_key_pinning
   test_ms_key_refresh_workflow_no_automerge
+  test_aws_key_refresh_updates_lock_atomically
   test_gitignore_merge
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing
   test_settings_merge_force_takes_generated
-  test_keys_init_migrates_and_encrypts
-  test_keys_init_no_plaintext_on_gpg_failure
-  test_keys_edit_no_plaintext_on_gpg_failure
-  test_api_mode_decrypts_keys
-  test_codex_installed_and_executable
-  test_codex_api_mode_decrypts_keys
-  test_cli_default_installs_claude
+  test_cli_claude_only
   test_cli_codex_only
   test_cli_both_skills_both_dirs
+  test_cli_opencode_only
+  test_cli_kiro_only
+  test_cli_none_is_native_and_empty
+  test_cli_native_compose_configuration
+  test_kiro_dependency_lock_contract
+  test_kiro_dependency_lock_command_is_atomic
+  test_kiro_renovate_contract
+  test_kiro_build_validation_contract
+  test_dockerhub_publishing_is_retired
+  test_provider_mappings_are_explicit_and_commented
+  test_native_config_merge_preserves_unrelated_keys
+  test_cli_deselection_removes_active_config_only
+  test_skills_without_cli_fails_early
+  test_interactive_blank_cli_selects_none
   test_cli_unknown_rejected
   test_cli_codex_not_a_tool
-  test_update_script_shipped_and_executable
-  test_update_script_full_round_trip
-  test_update_script_surgical_bumps_and_preserves_edits
-  test_update_script_surgical_skip_summary
-  test_update_script_surgical_transplants_keys
-  test_update_script_help_mentions_full_and_repo
+  test_unified_installer_shipped_and_executable
+  test_unified_installer_full_round_trip
+  test_unified_installer_full_round_trip_kiro
+  test_unified_installer_surgical_bumps_and_preserves_edits
+  test_unified_installer_surgical_skip_summary
+  test_unified_installer_surgical_transplants_keys
+  test_unified_installer_help_mentions_full_and_repo
+  test_unified_installer_stops_on_feature_drift
+  test_unified_installer_full_removes_cli_but_retains_state
+  test_unified_installer_failed_migration_is_atomic
   test_shellcheck
   test_renovate_regex_covers_pins
   test_renovate_regex_covers_vendor_script_pin

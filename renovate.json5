@@ -15,12 +15,9 @@
       enabled: false,
     },
     // Gate every non-major on 7 days of release age.
-    // prCreation:"not-pending" means no PR is created until the age check
-    // has already passed — avoids a week-old pending PR sitting in the list.
     {
       matchUpdateTypes: ["minor", "patch", "digest"],
       minimumReleaseAge: "7 days",
-      prCreation: "not-pending",
     },
 
     // Hard-exclude openai/codex alpha tags even if upstream retags one stable.
@@ -35,6 +32,20 @@
       groupName: "all dependencies",
       groupSlug: "all",
     },
+
+    // Kiro's source artifacts are architecture-specific but one release.
+    // The lock command replaces both records and hashes as one atomic update.
+    {
+      matchDepNames: ["kiro-cli"],
+      groupName: "Kiro CLI (amd64 and arm64)",
+      groupSlug: "kiro-cli",
+      automerge: false,
+      postUpgradeTasks: {
+        commands: ["./install.sh dependency-lock kiro {{{newValue}}}"],
+        fileFilters: [".devcontainer/dependencies.lock.json"],
+        executionMode: "update",
+      },
+    },
   ],
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`
@@ -48,8 +59,20 @@
       customType: 'regex',
       managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
       matchStrings: [
-        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER|CODEX_VER|DLV_VER)=(?<currentValue>\\S+)',
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER|CODEX_VER|OPENCODE_VER|DLV_VER)=(?<currentValue>\\S+)',
       ],
+    },
+    {
+      // The first locked architecture is Renovate's version anchor. The
+      // post-upgrade command then downloads and rewrites both records.
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.devcontainer/dependencies\\.lock\\.json$/'],
+      matchStrings: [
+        '"kiro"\\s*:\\s*\\{\\s*"amd64"\\s*:\\s*\\{\\s*"version"\\s*:\\s*"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"',
+      ],
+      depNameTemplate: 'kiro-cli',
+      datasourceTemplate: 'custom.kiroHomebrewCommits',
+      versioningTemplate: 'semver',
     },
     {
       // NVM_URL: version embedded in the download URL.
@@ -98,6 +121,16 @@
   // OpenVSX has no native Renovate datasource (renovatebot/renovate#31388), so
   // extension pins are tracked via this JSON custom datasource instead.
   customDatasources: {
+    // Kiro's official Linux index is the artifact source, but it has no
+    // trustworthy release timestamps. Homebrew cask update commits provide
+    // the independent timestamp used by minimumReleaseAge. Ignore every
+    // commit whose complete message is not exactly "kiro-cli <semver>".
+    kiroHomebrewCommits: {
+      defaultRegistryUrlTemplate: 'https://api.github.com/repos/Homebrew/homebrew-cask/commits?path=Casks/k/kiro-cli.rb&per_page=100',
+      transformTemplates: [
+        '{"releases": $map($filter($, function($commit) { $exists($match($commit.commit.message, /^kiro-cli [0-9]+\\.[0-9]+\\.[0-9]+$/)) }), function($commit) { {"version": $substringAfter($commit.commit.message, "kiro-cli "), "releaseTimestamp": $commit.commit.committer.date} })}',
+      ],
+    },
     openvsx: {
       defaultRegistryUrlTemplate: 'https://open-vsx.org/api/{{packageName}}',
       // releaseTimestamp is required: without it, minimumReleaseAge can't
