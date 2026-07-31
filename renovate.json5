@@ -15,12 +15,9 @@
       enabled: false,
     },
     // Gate every non-major on 7 days of release age.
-    // prCreation:"not-pending" means no PR is created until the age check
-    // has already passed — avoids a week-old pending PR sitting in the list.
     {
       matchUpdateTypes: ["minor", "patch", "digest"],
       minimumReleaseAge: "7 days",
-      prCreation: "not-pending",
     },
 
     // Hard-exclude openai/codex alpha tags even if upstream retags one stable.
