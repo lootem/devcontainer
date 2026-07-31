@@ -33,7 +33,7 @@ bash install.sh --language python
 ```
 
 `ltm.sh/dev/<ref>` serves `install.sh` from any branch/tag/sha (bare `ltm.sh/dev`
-→ `main`). CI attests `install.sh` and `.devcontainer/update.sh` on every push to
+→ `main`). CI attests `install.sh` on every push to
 `main` (`attest.yml`) via `actions/attest-build-provenance`. This is a
 **provenance** guarantee (origin and build), not content-safety, and only holds
 if you verify the *same* ref the URL serves - pin both to one sha.
@@ -71,32 +71,23 @@ in `.devcontainer/dependencies.lock.json`; Kiro's background updater is disabled
 
 ### Keeping a generated repo up to date
 
-Every generated repo gets a `.devcontainer/update.sh`, manual only. By default
-it runs **surgical**: it fetches upstream's `Dockerfile`, dependency lock, and
-`devcontainer.json`
-(parsed only, never executed) and bumps in place every pinned version this
-repo already tracks - each `# renovate:`-annotated `ARG`, the base image
-`@sha256:` digest, and `devcontainer.json` extension `@version` pins - for keys
-present both locally and upstream. Toggle `ARG`s, comments, and any other local
-edits are left untouched. It prints a summary of what bumped and what was
-skipped (and why).
+Generated repositories commit `.devcontainer/scaffold.json` and the same executable installer at `.devcontainer/install.sh`. The metadata records desired feature selections and upstream provenance; it contains no target path, timestamp, credentials, or machine-local state.
+
+Surgical updates refresh transplantable pins, dependency locks, signing material, extension pins, provenance, and the checked-in installer while preserving local structure:
 
 ```bash
-.devcontainer/update.sh                 # bump pins from lootem/devcontainer@main
-.devcontainer/update.sh --ref <sha>     # pin to a specific commit
-.devcontainer/update.sh --repo <owner/repo>  # pull pins from a fork
+.devcontainer/install.sh update
+.devcontainer/install.sh update --ref <branch-tag-or-sha>
 ```
 
-`--full` instead re-runs `install.sh` and overwrites `.devcontainer/` wholesale
-(the original behavior) - useful for pulling in structural upstream changes
-(e.g. a new arch layout), but it clobbers local Dockerfile/devcontainer.json
-edits:
+Use full mode for structural template changes or feature-selection changes. With a controlling terminal it summarizes the requested restamp before writing; in automation, pass `--force` explicitly:
 
 ```bash
-.devcontainer/update.sh --full
-.devcontainer/update.sh --full -- --force    # forward extra flags to install.sh
+.devcontainer/install.sh update --full
+.devcontainer/install.sh update --full --force
 ```
 
+The metadata is authoritative. If enabled Dockerfile features drift from it, update stops unless `--force` explicitly acknowledges that drift. Branch installs keep tracking their branch; an install pinned to a commit remains frozen until `--ref` replaces it.
 ### Prefer a prebuilt image?
 
 If you just want to `docker run`, a prebuilt image is on [Docker Hub](https://hub.docker.com/repository/docker/lootemsec/devcontainer) as a rolling,

@@ -1,7 +1,7 @@
 name: Attest Install Scripts
 
 # Attests the scripts that get curl|bash'd by users (install.sh, and
-# update.sh in every generated repo) so `gh attestation verify` can prove
+# install.sh shipped into every generated repo) so `gh attestation verify` can prove
 # "this file came from a workflow run in this repo at commit X". That's a
 # provenance guarantee, not a content-safety one - see README "Verify before
 # you run".
@@ -10,7 +10,6 @@ on:
     branches: [main]
     paths:
       - install.sh
-      - .devcontainer/update.sh
   workflow_dispatch:
 
 permissions:
@@ -28,4 +27,3 @@ jobs:
         with:
           subject-path: |
             install.sh
-            .devcontainer/update.sh

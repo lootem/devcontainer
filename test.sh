@@ -53,13 +53,15 @@ CLONE_LINE2='  || die "Failed to clone https://github.com/$REPO@$REF"'
 make_local_install() { # make_local_install -> prints path to a patched install.sh
   local patched="$PATCH_DIR/install.sh"
   grep -qF "$CLONE_LINE" "$REPO_ROOT/install.sh" \
-    || { echo "test.sh: install.sh's git clone line has changed — update CLONE_LINE in test.sh" >&2; exit 1; }
+    || { echo "test.sh: install.sh clone line changed" >&2; exit 1; }
   awk -v old1="$CLONE_LINE" -v old2="$CLONE_LINE2" -v root="$REPO_ROOT" '
     $0 == old1 {
       getline nextline
       if (nextline == old2) {
         print "cp -r \"" root "/.devcontainer\" \"" root "/templates\" \"" root "/skills\" \"$SRC/\" >/dev/null 2>&1 || die \"local copy failed\""
         print "cp \"" root "/.env.example\" \"$SRC/.env.example\" >/dev/null 2>&1 || die \"local copy failed\""
+        print "cp \"" root "/install.sh\" \"$SRC/install.sh\" >/dev/null 2>&1 || die \"local copy failed\""
+        print "git -C \"$SRC\" init -q && git -C \"$SRC\" add -A && git -C \"$SRC\" -c user.email=test@example.com -c user.name=test commit -qm fixture"
         next
       }
     }
@@ -133,20 +135,20 @@ EOF
   )
 }
 
-# update.sh --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
+# unified installer --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
 # for tests, swap that one line for a direct call to the patched local install.sh.
-UPDATE_CURL_LINE='curl -fsSL "https://ltm.sh/dev/$REF" | bash -s -- "${ARGS[@]}"'
+INSTALL_UPDATE_CURL_LINE='curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/install.sh" | bash -s -- "${ARGS[@]}"'
 
-make_local_update() { # make_local_update <path-to-update.sh> -> patches it in place, prints its path
+patch_unified_installer_full() { # patch_unified_installer_full <path-to-unified installer> -> patches it in place, prints its path
   local src="$1"
-  grep -qF "$UPDATE_CURL_LINE" "$src" \
-    || { echo "test.sh: update.sh's curl line has changed — update UPDATE_CURL_LINE in test.sh" >&2; exit 1; }
-  # Patched in place (not copied elsewhere): update.sh locates its own repo
+  grep -qF "$INSTALL_UPDATE_CURL_LINE" "$src" \
+    || { echo "test.sh: unified installer's curl line has changed — update INSTALL_UPDATE_CURL_LINE in test.sh" >&2; exit 1; }
+  # Patched in place (not copied elsewhere): unified installer locates its own repo
   # root via its own path (BASH_SOURCE), so it must stay under .devcontainer/.
   # Compare on the whitespace-trimmed line: the curl call is indented inside
   # run_full(), so an exact "$0 == old" would never match and the test would
   # silently fall through to the *live* published install.sh over the network.
-  awk -v old="$UPDATE_CURL_LINE" -v install="$INSTALL" '
+  awk -v old="$INSTALL_UPDATE_CURL_LINE" -v install="$INSTALL" '
     { line=$0; sub(/^[[:space:]]+/,"",line) }
     line == old { print "  bash \"" install "\" \"${ARGS[@]}\""; next }
     { print }
@@ -156,20 +158,20 @@ make_local_update() { # make_local_update <path-to-update.sh> -> patches it in p
   printf '%s' "$src"
 }
 
-# Surgical update.sh (the default mode) fetches upstream files (repo-relative
+# Surgical unified installer (the default mode) fetches upstream files (repo-relative
 # paths: .devcontainer/Dockerfile, .devcontainer/devcontainer.json, and each
 # enabled language's templates/<lang>/extensions.json) via fetch_upstream()/
 # fetch_upstream_optional(); for tests, swap both functions' bodies for a `cp`
 # from a local fixture "upstream" repo-root dir instead.
-UPDATE_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <repo-relative-path> <dest>'
-UPDATE_FETCH_OPTIONAL_FUNC_START='fetch_upstream_optional() { # fetch_upstream_optional <repo-relative-path> <dest> -> 0 fetched, 1 not found'
+INSTALL_FETCH_FUNC_START='fetch_upstream() { # fetch_upstream <repo-relative-path> <dest>'
+INSTALL_FETCH_OPTIONAL_FUNC_START='fetch_upstream_optional() { # fetch_upstream_optional <repo-relative-path> <dest> -> 0 fetched, 1 not found'
 
-make_local_update_surgical() { # make_local_update_surgical <path-to-update.sh> <upstream-dir> -> patches it in place, prints its path
+patch_unified_installer_surgical() { # patch_unified_installer_surgical <path-to-unified installer> <upstream-dir> -> patches it in place, prints its path
   local src="$1" upstream_dir="$2"
-  grep -qF "$UPDATE_FETCH_FUNC_START" "$src" \
-    || { echo "test.sh: update.sh's fetch_upstream() signature has changed — update UPDATE_FETCH_FUNC_START in test.sh" >&2; exit 1; }
-  grep -qF "$UPDATE_FETCH_OPTIONAL_FUNC_START" "$src" \
-    || { echo "test.sh: update.sh's fetch_upstream_optional() signature has changed — update UPDATE_FETCH_OPTIONAL_FUNC_START in test.sh" >&2; exit 1; }
+  grep -qF "$INSTALL_FETCH_FUNC_START" "$src" \
+    || { echo "test.sh: unified installer's fetch_upstream() signature has changed — update INSTALL_FETCH_FUNC_START in test.sh" >&2; exit 1; }
+  grep -qF "$INSTALL_FETCH_OPTIONAL_FUNC_START" "$src" \
+    || { echo "test.sh: unified installer's fetch_upstream_optional() signature has changed — update INSTALL_FETCH_OPTIONAL_FUNC_START in test.sh" >&2; exit 1; }
   awk -v up="$upstream_dir" '
     /^fetch_upstream\(\) \{/ {
       print "fetch_upstream() { cp \"" up "/$1\" \"$2\"; }"
@@ -260,6 +262,11 @@ test_fresh_scaffold() {
   assert_json_valid "$d/.devcontainer/devcontainer.json"
   assert_contains "$d/.gitignore" 'node_modules'
   assert_contains "$d/.gitignore" 'go.work'
+  assert_file_exists "$d/.devcontainer/install.sh"
+  [ -x "$d/.devcontainer/install.sh" ] && ok "generated installer is executable" || fail "generated installer is not executable"
+  [ ! -e "$d/.devcontainer/update.sh" ] && ok "standalone updater is absent" || fail "standalone updater still exists"
+  assert_json_has "$d/.devcontainer/scaffold.json" '.schemaVersion == 1 and .sourceRepository == "lootem/devcontainer" and .trackingRef == "main" and (.resolvedCommit | test("^[0-9a-f]{40}$")) and .generatorVersion == "1" and .languages == ["go", "js"] and .tools == [] and .clis == [] and .skills == false and .extensions == false' "scaffold metadata records desired state and provenance"
+  assert_json_missing "$d/.devcontainer/scaffold.json" 'has("target") or has("timestamp") or has("credentials")' "scaffold metadata excludes local and secret state"
 }
 
 test_extensions_default_off() {
@@ -428,29 +435,29 @@ EOF
   fi
 }
 
-test_update_script_shipped_and_executable() {
+test_unified_installer_shipped_and_executable() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
-  assert_file_exists "$d/.devcontainer/update.sh"
-  [ -x "$d/.devcontainer/update.sh" ] && ok "$d/.devcontainer/update.sh is executable" \
-    || fail "$d/.devcontainer/update.sh is not executable"
+  assert_file_exists "$d/.devcontainer/install.sh"
+  [ -x "$d/.devcontainer/install.sh" ] && ok "$d/.devcontainer/install.sh is executable" \
+    || fail "$d/.devcontainer/install.sh is not executable"
 }
 
-test_update_script_full_round_trip() {
+test_unified_installer_full_round_trip() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --tool awscli --force
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
 
-  local patched_update
-  patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
-  if ! ( cd "$d" && bash "$patched_update" --full -- --force ) >/tmp/test.sh.update.log 2>&1; then
-    echo "update.sh --full failed (see /tmp/test.sh.update.log):"
+  local patched_installer
+  patched_installer="$(patch_unified_installer_full "$d/.devcontainer/install.sh")"
+  if ! ( cd "$d" && bash "$patched_installer" update --full -- --force ) >/tmp/test.sh.update.log 2>&1; then
+    echo "unified installer --full failed (see /tmp/test.sh.update.log):"
     cat /tmp/test.sh.update.log
-    fail "update.sh --full ran successfully"
+    fail "unified installer --full ran successfully"
     return
   fi
-  ok "update.sh --full ran successfully"
+  ok "unified installer --full ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
@@ -461,15 +468,15 @@ test_update_script_full_round_trip() {
   assert_contains "$d/.devcontainer/docker-compose.yml" '      {}'
 }
 
-test_update_script_full_round_trip_kiro() {
-  local d patched_update
+test_unified_installer_full_round_trip_kiro() {
+  local d patched_installer
   d="$(new_dir)"
   run_install "$d" --language go --cli kiro --force
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
-  patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
-  if ! ( cd "$d" && bash "$patched_update" --full -- --force ) >/tmp/test.sh.update_kiro.log 2>&1; then
+  patched_installer="$(patch_unified_installer_full "$d/.devcontainer/install.sh")"
+  if ! ( cd "$d" && bash "$patched_installer" update --full -- --force ) >/tmp/test.sh.update_kiro.log 2>&1; then
     cat /tmp/test.sh.update_kiro.log
-    fail "update.sh --full preserves Kiro selection"
+    fail "unified installer --full preserves Kiro selection"
     return
   fi
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
@@ -477,7 +484,7 @@ test_update_script_full_round_trip_kiro() {
   assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro update setting survives full round-trip"
 }
 
-test_update_script_surgical_bumps_and_preserves_edits() {
+test_unified_installer_surgical_bumps_and_preserves_edits() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force --extensions
 
@@ -493,21 +500,22 @@ test_update_script_surgical_bumps_and_preserves_edits() {
   local up; up="$(new_dir)"
   mkdir -p "$up/.devcontainer" "$up/templates/go"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/install.sh" "$up/install.sh"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   cp "$REPO_ROOT/templates/go/extensions.json" "$up/templates/go/extensions.json"
   sed -i -E 's/ARG CLAUDE_VER=[0-9.]+/ARG CLAUDE_VER=9.9.999/' "$up/.devcontainer/Dockerfile"
   sed -i -E 's/ms-azuretools\.vscode-containers@[0-9.]+/ms-azuretools.vscode-containers@9.9.9/' "$up/.devcontainer/devcontainer.json"
   sed -i -E 's/golang\.go@[0-9.]+/golang.go@9.9.9/' "$up/templates/go/extensions.json"
 
-  local patched_update
-  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
-  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical.log 2>&1; then
-    echo "surgical update.sh failed (see /tmp/test.sh.surgical.log):"
+  local patched_installer
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_installer" update ) >/tmp/test.sh.surgical.log 2>&1; then
+    echo "surgical unified installer failed (see /tmp/test.sh.surgical.log):"
     cat /tmp/test.sh.surgical.log
-    fail "surgical update.sh ran successfully"
+    fail "surgical unified installer ran successfully"
     return
   fi
-  ok "surgical update.sh ran successfully"
+  ok "surgical unified installer ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDE_VER=9.9.999'
   assert_contains "$d/.devcontainer/devcontainer.json" 'ms-azuretools.vscode-containers@9.9.9'
@@ -518,7 +526,7 @@ test_update_script_surgical_bumps_and_preserves_edits() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
 }
 
-test_update_script_surgical_skip_summary() {
+test_unified_installer_surgical_skip_summary() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
 
@@ -527,6 +535,7 @@ test_update_script_surgical_skip_summary() {
   local up; up="$(new_dir)"
   mkdir -p "$up/.devcontainer"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/install.sh" "$up/install.sh"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   awk '/# renovate:.*depName=golang\.org\/x\/tools\/gopls/ { getline; next } { print }' \
     "$up/.devcontainer/Dockerfile" > "$up/.devcontainer/Dockerfile.tmp"
@@ -536,20 +545,20 @@ test_update_script_surgical_skip_summary() {
     echo 'ARG TOTALLY_NEW_VER=1.0.0'
   } >> "$up/.devcontainer/Dockerfile"
 
-  local patched_update out
-  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
-  if ! out="$(cd "$d" && bash "$patched_update" 2>&1)"; then
+  local patched_installer out
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if ! out="$(cd "$d" && bash "$patched_installer" update 2>&1)"; then
     echo "$out"
-    fail "surgical update.sh (skip summary) ran successfully"
+    fail "surgical unified installer (skip summary) ran successfully"
     return
   fi
-  ok "surgical update.sh (skip summary) ran successfully"
+  ok "surgical unified installer (skip summary) ran successfully"
 
   assert_contains <(printf '%s' "$out") "skipped (local-only, no matching upstream key): ARG GOPLS_VER"
-  assert_contains <(printf '%s' "$out") "skipped (upstream-only, run --full to adopt): ARG TOTALLY_NEW_VER"
+  assert_contains <(printf '%s' "$out") "skipped (upstream-only, run install.sh update --full to adopt): ARG TOTALLY_NEW_VER"
 }
 
-test_update_script_surgical_transplants_keys() {
+test_unified_installer_surgical_transplants_keys() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --tool awscli --force
 
@@ -558,6 +567,7 @@ test_update_script_surgical_transplants_keys() {
   local up; up="$(new_dir)"
   mkdir -p "$up/.devcontainer"
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
+  cp "$REPO_ROOT/install.sh" "$up/install.sh"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   cp "$REPO_ROOT/.devcontainer/awscli.pub" "$up/.devcontainer/awscli.pub"
   cp "$REPO_ROOT/.devcontainer/dependencies.lock.json" "$up/.devcontainer/dependencies.lock.json"
@@ -578,15 +588,15 @@ test_update_script_surgical_transplants_keys() {
     "$up/.devcontainer/Dockerfile"
   echo "# upstream-added trailer" >> "$up/.devcontainer/awscli.pub"
 
-  local patched_update
-  patched_update="$(make_local_update_surgical "$d/.devcontainer/update.sh" "$up")"
-  if ! ( cd "$d" && bash "$patched_update" ) >/tmp/test.sh.surgical_keys.log 2>&1; then
-    echo "surgical update.sh (key transplant) failed (see /tmp/test.sh.surgical_keys.log):"
+  local patched_installer
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if ! ( cd "$d" && bash "$patched_installer" update ) >/tmp/test.sh.surgical_keys.log 2>&1; then
+    echo "surgical unified installer (key transplant) failed (see /tmp/test.sh.surgical_keys.log):"
     cat /tmp/test.sh.surgical_keys.log
-    fail "surgical update.sh (key transplant) ran successfully"
+    fail "surgical unified installer (key transplant) ran successfully"
     return
   fi
-  ok "surgical update.sh (key transplant) ran successfully"
+  ok "surgical unified installer (key transplant) ran successfully"
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG MS_KEY_FP=DEADBEEF0000000000000000000000000000000A'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG MS_KEY_FP_2025=DEADBEEF0000000000000000000000000000000B'
@@ -613,11 +623,41 @@ test_update_script_surgical_transplants_keys() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
 }
 
-test_update_script_help_mentions_full_and_repo() {
+test_unified_installer_help_mentions_full_and_repo() {
   local out
-  out="$(bash "$REPO_ROOT/.devcontainer/update.sh" --help)"
+  out="$(bash "$REPO_ROOT/install.sh" update --help)"
   assert_contains <(printf '%s' "$out") "--full"
   assert_contains <(printf '%s' "$out") "--repo <o/r>"
+}
+
+test_unified_installer_stops_on_feature_drift() {
+  local d out; d="$(new_dir)"
+  run_install "$d" --language go --force
+  sed -i 's/^ARG GOLANG=true/ARG GOLANG=false/' "$d/.devcontainer/Dockerfile"
+  if out="$(bash "$d/.devcontainer/install.sh" update 2>&1)"; then fail "update should stop on feature drift"; else assert_contains <(printf '%s' "$out") "differs from scaffold.json"; fi
+}
+
+test_unified_installer_full_removes_cli_but_retains_state() {
+  local d patched_installer out; d="$(new_dir)"
+  run_install "$d" --language go --cli kiro --force
+  echo retained > "$d/.kiro/history.txt"
+  patched_installer="$(patch_unified_installer_full "$d/.devcontainer/install.sh")"
+  out="$(cd "$d" && bash "$patched_installer" update --full --no-cli --force 2>&1)" || { echo "$out"; fail "full update removes CLI"; return; }
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=false'
+  assert_file_exists "$d/.kiro/history.txt"
+  assert_contains <(printf '%s' "$out") "retained $d/.kiro"
+  assert_json_has "$d/.devcontainer/scaffold.json" '.clis == []' "metadata records CLI removal"
+}
+
+test_unified_installer_failed_migration_is_atomic() {
+  local d up before out patched_installer; d="$(new_dir)"; up="$(new_dir)"
+  run_install "$d" --language go --force
+  jq '.schemaVersion = 0 | del(.generatorVersion)' "$d/.devcontainer/scaffold.json" > "$d/.devcontainer/scaffold.json.tmp"; mv "$d/.devcontainer/scaffold.json.tmp" "$d/.devcontainer/scaffold.json"
+  before="$(sha256sum "$d/.devcontainer/scaffold.json" | awk '{print $1}')"
+  mkdir -p "$up/.devcontainer"; cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"; cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"; printf 'if then\n' > "$up/install.sh"
+  patched_installer="$(patch_unified_installer_surgical "$d/.devcontainer/install.sh" "$up")"
+  if out="$(cd "$d" && bash "$patched_installer" update 2>&1)"; then fail "invalid candidate should fail update"; else assert_contains <(printf '%s' "$out") "failed validation"; fi
+  assert_eq "$(sha256sum "$d/.devcontainer/scaffold.json" | awk '{print $1}')" "$before" "failed update leaves pre-migration metadata unchanged"
 }
 
 test_verbatim_extras() {
@@ -1073,7 +1113,7 @@ test_extensions_no_duplicate_canonical() {
 
 test_token_set_matches_dockerfile_args() {
   # install.sh's --language/--tool/--cli tokens must cover every ARG the
-  # Dockerfile can toggle 1:1, or update.sh's ARG->token round-trip silently
+  # Dockerfile can toggle 1:1, or unified installer's ARG->token round-trip silently
   # drops a feature (e.g. a hand-added CLI ARG with no corresponding flag).
   local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
   local install="$REPO_ROOT/install.sh"
@@ -1093,7 +1133,7 @@ test_token_set_matches_dockerfile_args() {
     if echo "$mapped_args" | grep -qxF "$a"; then
       ok "install.sh has a --language/--tool/--cli token for Dockerfile ARG $a"
     else
-      fail "Dockerfile ARG $a has no --language/--tool/--cli token (update.sh round-trip would drop it)"
+      fail "Dockerfile ARG $a has no --language/--tool/--cli token (unified installer round-trip would drop it)"
       missing=$((missing+1))
     fi
   done <<< "$dockerfile_args"
@@ -1153,7 +1193,7 @@ test_empty_array_expansions_guarded() {
   # at use (blank language prompt, no --tool, no `-- <args>`), so EVERY
   # "${NAME[@]}" expansion — for-loop, append, or command args — must use the
   # ${NAME[@]+"${NAME[@]}"} guard, which expands to nothing when empty.
-  local scripts=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh")
+  local scripts=("$REPO_ROOT/install.sh")
   local bad=0 f names name hits
   for f in "${scripts[@]}"; do
     names="$(grep -oE '^[[:space:]]*[A-Za-z_]+=\(\)' "$f" | sed -E 's/^[[:space:]]*//; s/=\(\)//')"
@@ -1178,7 +1218,7 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -1197,7 +1237,7 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck -S warning "$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+  shellcheck -S warning "$REPO_ROOT/install.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
@@ -1341,13 +1381,16 @@ TESTS=(
   test_interactive_blank_cli_selects_none
   test_cli_unknown_rejected
   test_cli_codex_not_a_tool
-  test_update_script_shipped_and_executable
-  test_update_script_full_round_trip
-  test_update_script_full_round_trip_kiro
-  test_update_script_surgical_bumps_and_preserves_edits
-  test_update_script_surgical_skip_summary
-  test_update_script_surgical_transplants_keys
-  test_update_script_help_mentions_full_and_repo
+  test_unified_installer_shipped_and_executable
+  test_unified_installer_full_round_trip
+  test_unified_installer_full_round_trip_kiro
+  test_unified_installer_surgical_bumps_and_preserves_edits
+  test_unified_installer_surgical_skip_summary
+  test_unified_installer_surgical_transplants_keys
+  test_unified_installer_help_mentions_full_and_repo
+  test_unified_installer_stops_on_feature_drift
+  test_unified_installer_full_removes_cli_but_retains_state
+  test_unified_installer_failed_migration_is_atomic
   test_shellcheck
   test_renovate_regex_covers_pins
   test_renovate_regex_covers_vendor_script_pin
