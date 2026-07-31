@@ -3,6 +3,7 @@
 .claude/
 .codex/
 .agents/
+.opencode/
 .handoffs/
 PRD-*.md
 .DS_Store

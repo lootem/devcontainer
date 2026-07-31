@@ -4,7 +4,7 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
       args:
-        CLAUDECODE: "true"
+        CODEX: "true"
     entrypoint: sleep infinity
     volumes:
       - ..:/app

@@ -435,6 +435,7 @@ arg_token() {
     AZPWSH)     echo "azpwsh" ;;
     CLAUDECODE) echo "claude" ;;
     CODEX)      echo "codex" ;;
+    OPENCODE)   echo "opencode" ;;
     *)          return 1 ;;
   esac
 }
@@ -448,7 +449,7 @@ run_full() {
     token="$(arg_token "$arg_name")" || continue
     case "$arg_name" in
       PYTHON|GOLANG|NODEJS|DOTNET) LANGS+=("$token") ;;
-      CLAUDECODE|CODEX)            CLIS+=("$token") ;;
+      CLAUDECODE|CODEX|OPENCODE)   CLIS+=("$token") ;;
       *)                           TOOLS+=("$token") ;;
     esac
   # NB: extract NAME from each `ARG NAME=true` line with sed, not a PCRE
@@ -461,7 +462,11 @@ run_full() {
   [ ${#TOOLS[@]} -gt 0 ] && ARGS+=(--tool "$(IFS=,; echo "${TOOLS[*]}")")
   [ ${#CLIS[@]} -gt 0 ] && ARGS+=(--cli "$(IFS=,; echo "${CLIS[*]}")")
 
-  { [ -d "$REPO_ROOT/.claude/skills" ] || [ -d "$REPO_ROOT/.agents/skills" ]; } && ARGS+=(--skills)
+  if [ ${#CLIS[@]} -gt 0 ] && \
+     { [ -d "$REPO_ROOT/.claude/skills" ] || [ -d "$REPO_ROOT/.agents/skills" ] \
+       || [ -d "$REPO_ROOT/.opencode/skills" ]; }; then
+    ARGS+=(--skills)
+  fi
 
   if [ -f "$DEVCONTAINER_JSON" ] && command -v jq >/dev/null 2>&1 \
      && [ "$(jq -r '((.customizations.vscode.extensions // []) | length > 0)' "$DEVCONTAINER_JSON" 2>/dev/null)" = "true" ]; then

@@ -21,6 +21,39 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Use bash as the default shell
 RUN ln -sf /bin/bash /bin/sh
 
+# -- Opencode
+ARG OPENCODE=false
+# renovate: datasource=npm depName=opencode-linux-x64
+ARG OPENCODE_VER=1.18.4
+
+RUN if [ "$OPENCODE" = "true" ]; then \
+    ARCH="$(dpkg --print-architecture)" && \
+    case "$ARCH" in \
+      amd64) NPM_PKG="opencode-linux-x64" ;; \
+      arm64) NPM_PKG="opencode-linux-arm64" ;; \
+      *) echo "Unsupported OpenCode architecture: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    META="/tmp/opencode-meta.json" && \
+    PKG="/tmp/${NPM_PKG}-${OPENCODE_VER}.tgz" && \
+    curl -fsSL "https://registry.npmjs.org/${NPM_PKG}/${OPENCODE_VER}" -o "$META" && \
+    [ "$(jq -r '.name' "$META")" = "$NPM_PKG" ] && \
+    [ "$(jq -r '.version' "$META")" = "$OPENCODE_VER" ] && \
+    TARBALL="$(jq -r '.dist.tarball' "$META")" && \
+    INTEGRITY="$(jq -r '.dist.integrity' "$META")" && \
+    case "$INTEGRITY" in sha512-*) ;; *) echo "Missing npm SHA-512 integrity" >&2; exit 1 ;; esac && \
+    EXPECTED_B64="${INTEGRITY#sha512-}" && \
+    [ -n "$EXPECTED_B64" ] && \
+    curl -fsSL "$TARBALL" -o "$PKG" && \
+    EXPECTED_HEX="$(printf '%s' "$EXPECTED_B64" | base64 -d \
+      | od -An -tx1 | tr -d '[:space:]')" && \
+    printf '%s  %s\n' "$EXPECTED_HEX" "$PKG" | sha512sum -c - && \
+    tar -xzf "$PKG" -C /usr/local/bin --strip-components=2 package/bin/opencode && \
+    chmod 0755 /usr/local/bin/opencode && \
+    rm -f "$PKG" "$META"; \
+    fi
+
+# -- End Opencode
+
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code

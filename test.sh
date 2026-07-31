@@ -188,7 +188,6 @@ run_install() { # run_install <target> <args...>  -> runs patched install.sh non
 }
 
 # --- Assertion helpers ------------------------------------------------------------
-CURRENT_TEST=""
 CURRENT_TEST_FAILED=false
 
 ok()   { echo "  ok   - $1"; }
@@ -242,8 +241,6 @@ assert_eq() { # assert_eq <actual> <expected> <description>
 
 test_syntax() {
   bash -n "$REPO_ROOT/install.sh" && ok "install.sh parses" || fail "install.sh syntax error"
-  bash -n "$REPO_ROOT/claude.sh" && ok "claude.sh parses" || fail "claude.sh syntax error"
-  bash -n "$REPO_ROOT/codex.sh" && ok "codex.sh parses" || fail "codex.sh syntax error"
 }
 
 test_fresh_scaffold() {
@@ -315,7 +312,7 @@ test_tool_unknown_rejected() {
 
 test_vendor_script_excluded_from_skills_copy() {
   local d; d="$(new_dir)"
-  run_install "$d" --language go --skills --force
+  run_install "$d" --language go --cli claude --skills --force
   assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
   assert_file_not_exists "$d/.claude/skills/vendor-matt-pocock-skills.sh"
 }
@@ -450,8 +447,11 @@ test_update_script_full_round_trip() {
 
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
-  # The default claude CLI selection must survive the ARG->--cli round-trip.
-  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
+  # No CLI selection must survive the ARG->--cli round-trip.
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" '      {}'
 }
 
 test_update_script_surgical_bumps_and_preserves_edits() {
@@ -593,7 +593,7 @@ test_verbatim_extras() {
 test_generated_compose_has_no_build_args() {
   # Generated projects bake their CLI choice into the copied Dockerfile's ARG
   # defaults, so the shipped docker-compose.yml must carry NO build args — else
-  # maintainer args (CLAUDECODE/CODEX) would leak in and force both CLIs on.
+  # maintainer args would leak in and force extra CLIs on.
   local d; d="$(new_dir)"
   run_install "$d" --cli codex --language go --force
   assert_file_exists "$d/.devcontainer/docker-compose.yml"
@@ -605,146 +605,30 @@ test_generated_compose_has_no_build_args() {
   # Codex-only selection must not have been overridden by leaked CLAUDECODE args.
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
 
-  # The repo's own compose SHOULD equip the maintainer container with both CLIs.
-  assert_contains "$REPO_ROOT/.devcontainer/docker-compose.yml" 'CLAUDECODE: "true"'
+  # The repo's own compose equips the maintainer container with Codex only.
   assert_contains "$REPO_ROOT/.devcontainer/docker-compose.yml" 'CODEX: "true"'
+  if grep -qE '^\s*(CLAUDECODE|OPENCODE):' "$REPO_ROOT/.devcontainer/docker-compose.yml"; then
+    fail "maintainer compose enables an AI CLI other than Codex"
+  else
+    ok "maintainer compose enables Codex only"
+  fi
 }
 
 test_gitignore_secrets() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
-  assert_contains "$d/.gitignore" ".env.keys"
-  assert_contains "$d/.gitignore" ".env.keys.gpg"
-}
-
-test_keys_init_migrates_and_encrypts() {
-  local d; d="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
-
-  # Auto-detected ANTHROPIC_API_KEY needs no retyping; type AWS_ACCESS_KEY_ID
-  # by hand (its name doesn't match the TOKEN/API_KEY auto-detect pattern),
-  # blank line to finish, then passphrase twice.
-  if ! ( cd "$d" && printf 'AWS_ACCESS_KEY_ID=AKIA123\n\ntestpass\ntestpass\n' | ./claude.sh keys init ) \
-      >/tmp/test.sh.keys_init.log 2>&1; then
-    fail "claude.sh keys init failed (see /tmp/test.sh.keys_init.log)"
-    cat /tmp/test.sh.keys_init.log
-    return
-  fi
-
-  assert_file_exists "$d/.env.keys.gpg"
-  assert_file_not_exists "$d/.env.keys"
-  if grep -q '^ANTHROPIC_API_KEY=' "$d/.env" 2>/dev/null; then
-    fail "$d/.env still contains ANTHROPIC_API_KEY (secret not migrated out)"
+  assert_contains "$d/.gitignore" ".env"
+  if grep -qF ".env.keys" "$d/.gitignore"; then
+    fail "generated .gitignore retains obsolete encrypted-key entries"
   else
-    ok "$d/.env no longer contains ANTHROPIC_API_KEY"
+    ok "generated .gitignore omits obsolete encrypted-key entries"
   fi
-
-  local decrypted
-  decrypted="$(cd "$d" && printf 'testpass\n' | gpg --batch --yes --passphrase-fd 0 --decrypt .env.keys.gpg 2>/dev/null)"
-  assert_contains <(printf '%s' "$decrypted") "AWS_ACCESS_KEY_ID=AKIA123"
-}
-
-test_keys_init_no_plaintext_on_gpg_failure() {
-  local d; d="$(new_dir)"
-  local tmpdir; tmpdir="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  mkdir -p "$d/readonly"
-  chmod 500 "$d/readonly"
-
-  if ( cd "$d" && TMPDIR="$tmpdir" KEYS_GPG="$d/readonly/.env.keys.gpg" \
-       bash -c "printf 'ANTHROPIC_API_KEY=sk-x\n\ntestpass\ntestpass\n' | ./claude.sh keys init" ) \
-      >/tmp/test.sh.keys_init_gpgfail.log 2>&1; then
-    fail "claude.sh keys init should fail when gpg can't write its output"
-  else
-    ok "claude.sh keys init fails cleanly when gpg can't write its output"
-  fi
-  chmod 700 "$d/readonly"
-
-  assert_file_not_exists "$d/readonly/.env.keys.gpg"
-  if [ -z "$(ls -A "$tmpdir" 2>/dev/null)" ]; then
-    ok "no leftover plaintext temp files after gpg failure"
-  else
-    fail "leftover temp files after gpg failure: $(ls -A "$tmpdir")"
-  fi
-}
-
-test_keys_edit_no_plaintext_on_gpg_failure() {
-  local d; d="$(new_dir)"
-  local tmpdir; tmpdir="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  mkdir -p "$d/keys"
-  echo "ANTHROPIC_API_KEY=sk-test-abc" > "$d/.env"
-  ( cd "$d" && KEYS_GPG="$d/keys/.env.keys.gpg" \
-    bash -c "printf '\ntestpass\ntestpass\n' | ./claude.sh keys init" ) >/dev/null 2>&1
-
-  # Read-only *directory* (not the file): gpg can still decrypt the existing
-  # keys file (r-x traversal), but the atomic re-encrypt can't create its temp
-  # in that dir, so the write fails and the original file must survive. (A
-  # read-only file alone wouldn't test this: the temp+rename write replaces the
-  # directory entry, which a writable dir permits regardless of file mode.)
-  chmod 500 "$d/keys"
-  if ( cd "$d" && TMPDIR="$tmpdir" KEYS_GPG="$d/keys/.env.keys.gpg" \
-       bash -c "printf 'testpass\nANTHROPIC_API_KEY=sk-changed\n\n' | ./claude.sh keys edit" ) \
-      >/tmp/test.sh.keys_edit_gpgfail.log 2>&1; then
-    fail "claude.sh keys edit should fail when gpg can't write its output"
-  else
-    ok "claude.sh keys edit fails cleanly when gpg can't write its output"
-  fi
-  chmod 700 "$d/keys"
-
-  if [ -z "$(ls -A "$tmpdir" 2>/dev/null)" ]; then
-    ok "no leftover plaintext temp files after gpg failure"
-  else
-    fail "leftover temp files after gpg failure: $(ls -A "$tmpdir")"
-  fi
-
-  local decrypted
-  decrypted="$(printf 'testpass\n' | gpg --batch --yes --passphrase-fd 0 --decrypt "$d/keys/.env.keys.gpg" 2>/dev/null)"
-  assert_contains <(printf '%s' "$decrypted") "ANTHROPIC_API_KEY=sk-test-abc"
-}
-
-test_api_mode_decrypts_keys() {
-  local d; d="$(new_dir)"
-  cp "$REPO_ROOT/claude.sh" "$d/claude.sh"
-  chmod +x "$d/claude.sh"
-  mkdir -p "$d/bin"
-  cat > "$d/bin/claude" <<'EOF'
-#!/usr/bin/env bash
-echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
-EOF
-  chmod +x "$d/bin/claude"
-  echo "ANTHROPIC_API_KEY=sk-test-xyz" > "$d/.env"
-  ( cd "$d" && printf '\ntestpass\ntestpass\n' | ./claude.sh keys init ) >/dev/null 2>&1
-
-  ( cd "$d" && printf 'testpass\n' | PATH="$d/bin:$PATH" ./claude.sh api ) \
-    >/tmp/test.sh.api_mode.log 2>&1
-  assert_contains /tmp/test.sh.api_mode.log "ANTHROPIC_API_KEY=sk-test-xyz"
-}
-
-test_codex_installed_and_executable() {
-  local d; d="$(new_dir)"
-  run_install "$d" --cli codex --language go --force
-  assert_file_exists "$d/codex.sh"
-  [ -x "$d/codex.sh" ] && ok "installed codex.sh is executable" || fail "installed codex.sh is not executable"
-}
-
-test_cli_default_installs_claude() {
-  local d; d="$(new_dir)"
-  run_install "$d" --language go --force   # no --cli -> claude default
-  assert_file_exists "$d/claude.sh"
-  assert_file_not_exists "$d/codex.sh"
-  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
-  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
 }
 
 test_cli_codex_only() {
   local d; d="$(new_dir)"
   run_install "$d" --cli codex --language go --skills --force
-  assert_file_exists "$d/codex.sh"
+  assert_file_not_exists "$d/codex.sh"
   assert_file_not_exists "$d/claude.sh"
   assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
   assert_file_not_exists "$d/.claude/skills/code-review/SKILL.md"
@@ -752,17 +636,171 @@ test_cli_codex_only() {
   assert_file_not_exists "$d/.agents/skills/vendor-matt-pocock-skills.sh"
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
+  assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
+  assert_contains "$d/.codex/config.toml" '[model_providers.azure]'
+  assert_contains "$d/.codex/config.toml" 'env_key = "AZURE_OPENAI_API_KEY"'
+  assert_contains "$d/.codex/config.toml" 'query_params = { api-version = "2025-04-01-preview" }'
+}
+
+test_cli_claude_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli claude --language go --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CLAUDE_CONFIG_DIR: /app/.claude'
+  assert_json_has "$d/.claude/settings.json" '.autoUpdates == false' "Claude native updates disabled"
 }
 
 test_cli_both_skills_both_dirs() {
   local d; d="$(new_dir)"
   run_install "$d" --cli claude,codex --language go --skills --force
-  assert_file_exists "$d/claude.sh"
-  assert_file_exists "$d/codex.sh"
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
   assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
   assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
+}
+
+test_cli_opencode_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli opencode --language go --skills --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_file_exists "$d/.opencode/skills/code-review/SKILL.md"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'registry.npmjs.org/${NPM_PKG}/${OPENCODE_VER}'
+  assert_contains "$d/.devcontainer/Dockerfile" 'sha512sum -c -'
+  assert_contains "$d/.devcontainer/Dockerfile" 'package/bin/opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG_DIR: /app/.opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" '../.opencode/data:/home/vscode/.local/share/opencode'
+  assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode native updates disabled"
+}
+
+test_cli_none_is_native_and_empty() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  if grep -qE '^[[:space:]]+(CLAUDE_CONFIG_DIR|CODEX_HOME|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR):' \
+      "$d/.devcontainer/docker-compose.yml"; then
+    fail "no-CLI scaffold has active CLI state configuration"
+  else
+    ok "no-CLI scaffold has no active CLI state configuration"
+  fi
+}
+
+test_cli_native_compose_configuration() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli claude,codex,opencode --language go --force
+  assert_file_not_exists "$d/claude.sh"
+  assert_file_not_exists "$d/codex.sh"
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CLAUDE_CONFIG_DIR: /app/.claude'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'DISABLE_AUTOUPDATER: "1"'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG: /app/.opencode/opencode.json'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG_DIR: /app/.opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_DISABLE_AUTOUPDATE: "1"'
+  assert_contains "$d/.devcontainer/docker-compose.yml" '../.opencode/data:/home/vscode/.local/share/opencode'
+  if grep -qE '^[[:space:]]+XDG_DATA_HOME:' "$d/.devcontainer/docker-compose.yml"; then
+    fail "generated compose changes XDG_DATA_HOME globally"
+  else
+    ok "generated compose leaves XDG_DATA_HOME unchanged"
+  fi
+}
+
+test_provider_mappings_are_explicit_and_commented() {
+  local d; d="$(new_dir)"
+  run_install "$d" --language go --force
+  local var
+  for var in \
+    ANTHROPIC_API_KEY CLAUDE_CODE_USE_BEDROCK AWS_REGION AWS_PROFILE \
+    AWS_BEARER_TOKEN_BEDROCK AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+    AWS_SESSION_TOKEN CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_FOUNDRY_RESOURCE \
+    ANTHROPIC_FOUNDRY_API_KEY OPENAI_API_KEY AZURE_OPENAI_API_KEY \
+    AZURE_RESOURCE_NAME; do
+    assert_contains "$d/.devcontainer/docker-compose.yml" "# $var: \${$var:-}"
+    assert_contains "$d/.env.example" "$var="
+  done
+  if grep -qE '^[[:space:]]+env_file:' "$d/.devcontainer/docker-compose.yml"; then
+    fail "generated compose injects .env wholesale"
+  else
+    ok "generated compose does not inject .env wholesale"
+  fi
+}
+
+test_native_config_merge_preserves_unrelated_keys() {
+  local d; d="$(new_dir)"
+  mkdir -p "$d/.claude" "$d/.codex" "$d/.opencode"
+  printf '{"permissions":{"allow":["Bash(git status)"]}}\n' > "$d/.claude/settings.json"
+  printf 'model = "gpt-test"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
+  printf '{"model":"anthropic/test"}\n' > "$d/.opencode/opencode.json"
+  run_install "$d" --cli claude,codex,opencode --language go --force
+  assert_json_has "$d/.claude/settings.json" '.autoUpdates == false' "Claude auto-updates disabled"
+  assert_json_has "$d/.claude/settings.json" '.permissions.allow[0] == "Bash(git status)"' "Claude config preserved"
+  assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
+  assert_count "$d/.codex/config.toml" 'check_for_update_on_startup = false' 1
+  assert_contains "$d/.codex/config.toml" 'model = "gpt-test"'
+  assert_contains "$d/.codex/config.toml" '[history]'
+  assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode auto-updates disabled"
+  assert_json_has "$d/.opencode/opencode.json" '.model == "anthropic/test"' "OpenCode config preserved"
+}
+
+test_cli_deselection_removes_active_config_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli codex,opencode --language go --force
+  mkdir -p "$d/.opencode/data"
+  printf 'credential-state\n' > "$d/.codex/auth.json"
+  printf 'connect-state\n' > "$d/.opencode/data/auth.json"
+  printf '\n# user compose customization\n' >> "$d/.devcontainer/docker-compose.yml"
+  run_install "$d" --language go
+  if grep -qE '^[[:space:]]+(CODEX_HOME|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR):' \
+      "$d/.devcontainer/docker-compose.yml"; then
+    fail "deselected CLI remains active in compose"
+  else
+    ok "deselected CLI active compose configuration removed"
+  fi
+  assert_file_exists "$d/.codex/auth.json"
+  assert_file_exists "$d/.opencode/data/auth.json"
+  assert_contains "$d/.devcontainer/docker-compose.yml" '# user compose customization'
+}
+
+test_skills_without_cli_fails_early() {
+  local d out
+  d="$(new_dir)"
+  if out="$(run_install "$d" --language go --skills --force 2>&1)"; then
+    fail "--skills without --cli should fail"
+  else
+    ok "--skills without --cli fails"
+  fi
+  assert_contains <(printf '%s' "$out") "--skills requires at least one --cli"
+  if printf '%s' "$out" | grep -qF "Cloning"; then
+    fail "--skills validation happened after cloning"
+  else
+    ok "--skills validation happens before cloning"
+  fi
+}
+
+test_interactive_blank_cli_selects_none() {
+  if ! command -v script >/dev/null 2>&1; then
+    echo "  skip - script not installed"
+    return
+  fi
+  local d out
+  d="$(new_dir)"
+  out="$(printf 'go\n\nn\n' | script -qec "bash '$INSTALL' --target '$d' --force" /dev/null 2>&1)"
+  assert_contains <(printf '%s' "$out") "AI CLIs (comma-separated, blank for none):"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
 }
 
 test_cli_unknown_rejected() {
@@ -782,27 +820,6 @@ test_cli_codex_not_a_tool() {
   else
     ok "install.sh rejects 'codex' as a --tool (moved to --cli)"
   fi
-}
-
-test_codex_api_mode_decrypts_keys() {
-  local d; d="$(new_dir)"
-  cp "$REPO_ROOT/codex.sh" "$d/codex.sh"
-  chmod +x "$d/codex.sh"
-  mkdir -p "$d/bin"
-  # Stub codex: echo the resolved key so we can confirm it was decrypted+exported.
-  cat > "$d/bin/codex" <<'EOF'
-#!/usr/bin/env bash
-echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
-EOF
-  chmod +x "$d/bin/codex"
-  echo "OPENAI_API_KEY=sk-codex-xyz" > "$d/.env"
-  ( cd "$d" && printf '\ntestpass\ntestpass\n' | ./codex.sh keys init ) >/dev/null 2>&1
-
-  # No plaintext markers left in .env (migrated out) + a keys file present ->
-  # api fallback should decrypt OPENAI_API_KEY and hand it to codex.
-  ( cd "$d" && printf 'testpass\n' | PATH="$d/bin:$PATH" ./codex.sh ) \
-    >/tmp/test.sh.codex_api_mode.log 2>&1
-  assert_contains /tmp/test.sh.codex_api_mode.log "OPENAI_API_KEY=sk-codex-xyz"
 }
 
 test_renovate_regex_covers_pins() {
@@ -957,7 +974,10 @@ test_ask_yn_all_sticks_across_subshell() {
     local first="$1"
     (
       eval "$harness"
+      # Referenced by ask_yn loaded dynamically above.
+      # shellcheck disable=SC2034
       FORCE=false
+      # shellcheck disable=SC2034
       HAVE_TTY=true
       ANSWER_ALL_FILE="$(mktemp)"
       local calls; calls="$(mktemp)"; echo 0 > "$calls"
@@ -997,6 +1017,8 @@ test_empty_array_expansions_guarded() {
       # '+', so it's excluded; ${#NAME[@]}, ${NAME[*]} and ${NAME[@]:-} never match.
       hits="$(grep -nE "[^+]\"\\\$\\{${name}\\[@\\]\\}\"" "$f" || true)"
       if [ -n "$hits" ]; then
+        # Deliberately prints the invalid source pattern detected by this test.
+        # shellcheck disable=SC1087
         fail "$(basename "$f"): bare \"\${$name[@]}\" crashes on bash 3.2 — use \${$name[@]+\"\${$name[@]}\"}: $hits"
         bad=$((bad+1))
       fi
@@ -1009,7 +1031,7 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/codex.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -1028,7 +1050,7 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck "$REPO_ROOT/install.sh" "$REPO_ROOT/claude.sh" "$REPO_ROOT/codex.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+  shellcheck -S warning "$REPO_ROOT/install.sh" "$REPO_ROOT/.devcontainer/update.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
@@ -1143,15 +1165,17 @@ TESTS=(
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing
   test_settings_merge_force_takes_generated
-  test_keys_init_migrates_and_encrypts
-  test_keys_init_no_plaintext_on_gpg_failure
-  test_keys_edit_no_plaintext_on_gpg_failure
-  test_api_mode_decrypts_keys
-  test_codex_installed_and_executable
-  test_codex_api_mode_decrypts_keys
-  test_cli_default_installs_claude
+  test_cli_claude_only
   test_cli_codex_only
   test_cli_both_skills_both_dirs
+  test_cli_opencode_only
+  test_cli_none_is_native_and_empty
+  test_cli_native_compose_configuration
+  test_provider_mappings_are_explicit_and_commented
+  test_native_config_merge_preserves_unrelated_keys
+  test_cli_deselection_removes_active_config_only
+  test_skills_without_cli_fails_early
+  test_interactive_blank_cli_selects_none
   test_cli_unknown_rejected
   test_cli_codex_not_a_tool
   test_update_script_shipped_and_executable

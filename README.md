@@ -44,7 +44,7 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 | --- | --- |
 | `-l`, `--language <list>` | Language(s): `python`, `go`, `js`, `dotnet`. Comma-combine, or omit to be prompted. |
 | `-T`, `--tool <list>` | Cloud/shell tool(s): `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`. Comma-combine. |
-| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`. Comma-combine, or omit for `claude` (the default). |
+| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`, `opencode`. Comma-combine, or omit for none. |
 | `--skills` | Also bring the curated skills, into each selected CLI's skills dir. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
@@ -55,10 +55,15 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 Enabling a tool only flips its Dockerfile build arg (no editor/`.gitignore`
 entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
 
-Selecting an AI CLI installs its binary, copies its launcher (`claude.sh` for
-`claude`, `codex.sh` for `codex`), and — with `--skills` — copies the curated
-skills into that CLI's skills dir (`.claude/skills/` for Claude, `.agents/skills/`
-for Codex; both read the same `SKILL.md` format).
+Selecting an AI CLI installs its binary for direct execution and gives it
+project-local native state (`.claude/`, `.codex/`, or `.opencode/`). With
+`--skills`, the curated skills are copied into `.claude/skills/`,
+`.agents/skills/`, or `.opencode/skills/`. Passing `--skills` without at least
+one selected CLI is an error.
+
+OpenCode installs the architecture-specific headless CLI package from npm. The
+build verifies the package tarball against npm's published SHA-512 integrity
+value before extracting `opencode`.
 
 ### Keeping a generated repo up to date
 
@@ -97,7 +102,7 @@ docker pull lootemsec/devcontainer:all      # every language + cloud CLI
 ```
 
 This single `:all` tag includes every language plus the AWS/Azure CLIs and
-PowerShell; it ships Claude Code pre-installed with auto-update disabled. For
+PowerShell; it ships Codex pre-installed with update checks disabled. For
 reproducible, pinned, supply-chain-gated, per-language builds, use `install.sh`
 instead.
 
@@ -105,38 +110,32 @@ instead.
 
 Open the folder in [VS Code](https://code.visualstudio.com/) with the
 [Dev Containers](https://containers.dev/) extension and start working: a dev
-container tuned for your language(s), with editor settings, recommended
-extensions, and a starter `.gitignore`, plus Claude Code ready to run (add
-`--skills` for the curated skills; reruns only add/update, never remove ones
-upstream dropped).
-
-**Your Claude setup sticks around.** Claude Code points at a `.claude` folder
-that lives with your project, not inside the throwaway container - so settings,
-permissions, and history survive every rebuild, scoped per project.
+container tuned for your language(s), with editor settings, optional recommended
+extensions, and a starter `.gitignore`. Selected AI CLIs run by their native
+command (`claude`, `codex`, or `opencode`) and keep configuration, credentials,
+and history in ignored workspace directories so they survive container rebuilds.
+OpenCode's native `/connect` credentials persist under `.opencode/data`.
 
 ## Bring your own backend
 
-The `claude.sh` (and, for Codex, `codex.sh`) helper picks how you connect and
-remembers it in a local `.env` (never committed). Copy `.env.example` to `.env`,
-fill in your backend's fields, and just run the launcher — **the backend is
-inferred from the environment variables you've set**, no argument needed:
+Copy `.env.example` to the ignored `.env`, fill in the provider values you need,
+then uncomment only their matching `${VAR:-}` entries in
+`.devcontainer/docker-compose.yml`. Compose does not inject `.env` wholesale.
+The documented first-class families are Anthropic API, AWS Bedrock, Azure AI
+Foundry, OpenAI API, and Azure OpenAI.
 
-- **`./claude.sh`** - Claude Code. Infers Anthropic API / Amazon Bedrock / Azure
-  AI Foundry from what's set (e.g. `AWS_REGION`, `ANTHROPIC_FOUNDRY_RESOURCE`),
-  or falls back to your API key. Force it with `CLAUDE_AUTH_MODE=api|bedrock|foundry`.
-- **`./codex.sh`** - Codex. Infers OpenAI API / Azure OpenAI (e.g.
-  `AZURE_OPENAI_BASE_URL`), or falls back to your API key / ChatGPT sign-in.
-  Force it with `CODEX_AUTH_MODE=api|azure`.
+Run each selected CLI directly. Claude consumes the Anthropic, Bedrock, and
+Foundry variables natively. Codex consumes `OPENAI_API_KEY`; its generated
+`model_providers.azure` configuration uses `AZURE_OPENAI_API_KEY` after you
+replace the resource placeholder and select the Azure provider/model at the top
+level of `.codex/config.toml`; its endpoint and API version are native TOML
+settings rather than environment variables. OpenCode supports the documented
+variables and its broader provider catalog through native configuration and
+`/connect`.
 
-If several backends' markers are set at once you're prompted to choose (or the
-override var decides, for CI).
-
-**Keep durable secrets encrypted at rest.** Run `./claude.sh keys init` (then
-`keys edit`) — same subcommands on `codex.sh` — to move your secret `KEY=VALUE`
-(ex. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) lines out of `.env` into a
-gpg-encrypted `.env.keys.gpg`. It's decrypted to memory only when a backend needs
-it - plaintext never touches disk to mitigate opportunistic disk
-scraping.
+Generated configuration disables CLI-managed updates while preserving unrelated
+settings. The pinned container image remains the update boundary: rerun the
+generator or rebuild against a newer ref to update a CLI.
 
 ## Built to reduce supply-chain risk
 

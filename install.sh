@@ -51,14 +51,14 @@ tool_arg() {
 }
 VALID_TOOLS="awscli azcli gh pwsh azpwsh"
 
-# AI CLI token → Dockerfile ARG name. Selecting a CLI installs its binary,
-# copies its helper script (claude.sh/codex.sh), and copies skills/ into that
-# CLI's skills dir (see cli_skills_dir). All CLI ARGs default false in the
+# AI CLI token → Dockerfile ARG name. Selecting a CLI installs its binary and
+# configures its native project-local state. All CLI ARGs default false in the
 # Dockerfile; install.sh flips only the selected ones true.
 cli_arg() {
   case "$1" in
     claude) echo "CLAUDECODE" ;;
     codex)  echo "CODEX" ;;
+    opencode) echo "OPENCODE" ;;
     *)      return 1 ;;
   esac
 }
@@ -68,10 +68,11 @@ cli_skills_dir() {
   case "$1" in
     claude) echo ".claude/skills" ;;
     codex)  echo ".agents/skills" ;;
+    opencode) echo ".opencode/skills" ;;
     *)      return 1 ;;
   esac
 }
-VALID_CLIS="claude codex"
+VALID_CLIS="claude codex opencode"
 
 # --- TTY-aware helpers ----------------------------------------------------------
 HAVE_TTY=false
@@ -161,8 +162,8 @@ Usage: install.sh [options]
 
   -l, --language <list>  Comma-separated or repeated languages ($VALID_LANGS)
   -T, --tool <list>      Comma-separated or repeated tools ($VALID_TOOLS)
-  -c, --cli <list>       Comma-separated or repeated AI CLIs ($VALID_CLIS; default: claude)
-      --skills           Copy skills/ into .claude/skills/ (default: off)
+  -c, --cli <list>       Comma-separated or repeated AI CLIs ($VALID_CLIS; default: none)
+      --skills           Copy skills/ into each selected CLI's skills dir (default: off)
       --extensions       Add recommended VS Code extensions to devcontainer.json (default: off)
   -t, --target <dir>     Target directory (default: current directory)
   -f, --force            Overwrite existing files without prompting
@@ -204,11 +205,10 @@ if [ ${#LANGS[@]} -eq 0 ]; then
   fi
 fi
 
-# AI CLIs: prompt when interactive and none were passed. A blank answer (and the
-# non-interactive case) falls through to the claude default set below.
+# AI CLIs: prompt when interactive and none were passed. Blank selects none.
 if [ ${#CLIS[@]} -eq 0 ] && [ "$HAVE_TTY" = true ]; then
   info "Available AI CLIs: $VALID_CLIS"
-  add_clis "$(ask 'AI CLIs (comma-separated, blank for claude): ')"
+  add_clis "$(ask 'AI CLIs (comma-separated, blank for none): ')"
 fi
 
 # Validate & de-duplicate language tokens.
@@ -241,8 +241,7 @@ TOOLS=("${CLEAN_TOOLS[@]:-}")
 # Drop the empty placeholder that :-"" may leave when no tools selected.
 [ "${TOOLS[0]:-}" = "" ] && TOOLS=()
 
-# Validate & de-duplicate AI CLI tokens, then default to claude when none chosen
-# (blank prompt or non-interactive run) — preserves the historic default.
+# Validate & de-duplicate AI CLI tokens.
 SEEN=" "
 CLEAN_CLIS=()
 for c in ${CLIS[@]+"${CLIS[@]}"}; do
@@ -253,9 +252,12 @@ for c in ${CLIS[@]+"${CLIS[@]}"}; do
 done
 CLIS=("${CLEAN_CLIS[@]:-}")
 [ "${CLIS[0]:-}" = "" ] && CLIS=()
-[ ${#CLIS[@]} -eq 0 ] && CLIS=(claude)
 
-if [ "$WANT_SKILLS" = false ] && [ "$HAVE_TTY" = true ]; then
+if [ "$WANT_SKILLS" = true ] && [ ${#CLIS[@]} -eq 0 ]; then
+  die "--skills requires at least one --cli selection."
+fi
+
+if [ "$WANT_SKILLS" = false ] && [ "$HAVE_TTY" = true ] && [ ${#CLIS[@]} -gt 0 ]; then
   case "$(ask 'Install skills into the selected CLIs'"'"' skills dirs? [y/N] ')" in
     y|Y|yes) WANT_SKILLS=true ;;
   esac
@@ -418,13 +420,137 @@ merge_settings_json() { # merge_settings_json <dest>  (reads generated JSON on s
   info "Merged $dest"
 }
 
+merge_json_boolean() { # merge_json_boolean <dest> <key> <true|false>
+  local dest="$1" key="$2" value="$3" existing
+  mkdir -p "$(dirname "$dest")"
+  if [ -e "$dest" ]; then
+    existing="$(strip_jsonc "$dest")"
+  else
+    existing='{}'
+  fi
+  printf '%s' "$existing" | jq --arg key "$key" --argjson value "$value" \
+    '.[$key] = $value' > "$dest.tmp"
+  mv "$dest.tmp" "$dest"
+  info "Merged $dest"
+}
+
+merge_codex_native_config() { # merge update policy and Azure provider template
+  local dest="$1" has_azure=false
+  mkdir -p "$(dirname "$dest")"
+  [ -e "$dest" ] || : > "$dest"
+  grep -qE '^[[:space:]]*\[model_providers\.azure\][[:space:]]*$' "$dest" \
+    && has_azure=true
+  awk '
+    BEGIN { in_table=0; wrote=0 }
+    /^\[/ && !in_table {
+      if (!wrote) print "check_for_update_on_startup = false"
+      wrote=1
+      in_table=1
+    }
+    !in_table && /^[[:space:]]*check_for_update_on_startup[[:space:]]*=/ {
+      if (!wrote) print "check_for_update_on_startup = false"
+      wrote=1
+      next
+    }
+    { print }
+    END {
+      if (!wrote) print "check_for_update_on_startup = false"
+    }
+  ' "$dest" > "$dest.tmp"
+  if [ "$has_azure" = false ]; then
+    cat >> "$dest.tmp" <<'EOF'
+
+# Azure OpenAI provider. Replace YOUR_RESOURCE_NAME, then set the top-level
+# model_provider = "azure" and model = "<deployment-name>" to select it.
+[model_providers.azure]
+name = "Azure OpenAI"
+base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
+env_key = "AZURE_OPENAI_API_KEY"
+wire_api = "responses"
+query_params = { api-version = "2025-04-01-preview" }
+EOF
+  fi
+  mv "$dest.tmp" "$dest"
+  info "Merged $dest"
+}
+
 # ═══ Assembly ═══════════════════════════════════════════════════════════════════
 
-# --- .devcontainer/ verbatim files -----------------------------------------------
-# Ship the clean templates/ compose (no build args) — the CLI selection is baked
-# into the copied Dockerfile's ARG defaults, so generated projects need no args.
-# (.devcontainer/docker-compose.yml carries maintainer-only args; don't copy it.)
-copy_verbatim "$TPL/docker-compose.yml" "$TARGET/.devcontainer/docker-compose.yml"
+# --- .devcontainer/ files --------------------------------------------------------
+# Generate the clean compose without build args, adding active native state
+# configuration only for selected CLIs. Provider mappings remain explicit but
+# commented until the user opts into them.
+CLI_ENV="$SRC/cli.environment"
+CLI_VOLUMES="$SRC/cli.volumes"
+: > "$CLI_ENV"
+: > "$CLI_VOLUMES"
+if has_cli claude; then
+  printf '%s\n' \
+    '      CLAUDE_CONFIG_DIR: /app/.claude' \
+    '      DISABLE_AUTOUPDATER: "1"' >> "$CLI_ENV"
+fi
+if has_cli codex; then
+  printf '%s\n' '      CODEX_HOME: /app/.codex' >> "$CLI_ENV"
+fi
+if has_cli opencode; then
+  printf '%s\n' \
+    '      OPENCODE_CONFIG: /app/.opencode/opencode.json' \
+    '      OPENCODE_CONFIG_DIR: /app/.opencode' \
+    '      OPENCODE_DISABLE_AUTOUPDATE: "1"' >> "$CLI_ENV"
+  printf '%s\n' \
+    '      - ../.opencode/data:/home/vscode/.local/share/opencode' >> "$CLI_VOLUMES"
+fi
+[ -s "$CLI_ENV" ] || printf '%s\n' '      {}' >> "$CLI_ENV"
+render_compose() { # render_compose <template-or-existing-compose>
+  awk -v env_file="$CLI_ENV" -v volumes_file="$CLI_VOLUMES" '
+  /# __CLI_ENVIRONMENT_BEGIN__/ {
+    print
+    while ((getline line < env_file) > 0) print line
+    close(env_file)
+    skip_environment=1
+    next
+  }
+  skip_environment && /# __CLI_ENVIRONMENT_END__/ {
+    skip_environment=0
+    print
+    next
+  }
+  skip_environment { next }
+  /# __CLI_VOLUMES_BEGIN__/ {
+    print
+    while ((getline line < volumes_file) > 0) print line
+    close(volumes_file)
+    skip_volumes=1
+    next
+  }
+  skip_volumes && /# __CLI_VOLUMES_END__/ {
+    skip_volumes=0
+    print
+    next
+  }
+  skip_volumes { next }
+  { print }
+  ' "$1"
+}
+
+COMPOSE_DEST="$TARGET/.devcontainer/docker-compose.yml"
+if [ -f "$COMPOSE_DEST" ] \
+   && grep -qF '# __CLI_ENVIRONMENT_BEGIN__' "$COMPOSE_DEST" \
+   && grep -qF '# __CLI_ENVIRONMENT_END__' "$COMPOSE_DEST" \
+   && grep -qF '# __CLI_VOLUMES_BEGIN__' "$COMPOSE_DEST" \
+   && grep -qF '# __CLI_VOLUMES_END__' "$COMPOSE_DEST"; then
+  render_compose "$COMPOSE_DEST" > "$COMPOSE_DEST.tmp"
+  mv "$COMPOSE_DEST.tmp" "$COMPOSE_DEST"
+  info "Merged managed CLI configuration into $COMPOSE_DEST"
+else
+  render_compose "$TPL/docker-compose.yml" | write_from_stdin "$COMPOSE_DEST"
+fi
+
+# Merge the native update-disable settings without replacing unrelated state.
+has_cli claude && merge_json_boolean "$TARGET/.claude/settings.json" autoUpdates false
+has_cli codex && merge_codex_native_config "$TARGET/.codex/config.toml"
+has_cli opencode && merge_json_boolean "$TARGET/.opencode/opencode.json" autoupdate false
+
 [ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"
 if [ -f "$DEVC/update.sh" ]; then
   copy_verbatim "$DEVC/update.sh" "$TARGET/.devcontainer/update.sh"
@@ -514,22 +640,13 @@ for l in ${LANGS[@]+"${LANGS[@]}"}; do
   esac
 done
 
-# --- Root helper files (per selected CLI) ---------------------------------------
-# Each CLI's launcher is copied only when that CLI is selected; .env/.env.keys.gpg
-# machinery is shared, so .env.example is always useful.
-if has_cli claude && [ -f "$SRC/claude.sh" ]; then
-  copy_verbatim "$SRC/claude.sh" "$TARGET/claude.sh"
-  [ -f "$TARGET/claude.sh" ] && chmod +x "$TARGET/claude.sh"
-fi
-if has_cli codex && [ -f "$SRC/codex.sh" ]; then
-  copy_verbatim "$SRC/codex.sh" "$TARGET/codex.sh"
-  [ -f "$TARGET/codex.sh" ] && chmod +x "$TARGET/codex.sh"
-fi
+# --- Provider environment example ----------------------------------------------
 [ -f "$SRC/.env.example" ] && copy_verbatim "$SRC/.env.example" "$TARGET/.env.example"
 
 # --- Skills (optional) — copied into each selected CLI's skills dir ---------------
-# claude → .claude/skills, codex → .agents/skills (same SKILL.md format). Both are
-# kept committable by the generated .gitignore.
+# claude → .claude/skills, codex → .agents/skills, opencode →
+# .opencode/skills (same SKILL.md format). All are kept committable by the
+# generated .gitignore.
 SKILLS_DIRS=()
 if [ "$WANT_SKILLS" = true ]; then
   if [ -d "$SRC/skills" ]; then
