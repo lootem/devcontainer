@@ -6,5 +6,7 @@ services:
       args:
         CODEX: "true"
     entrypoint: sleep infinity
+    environment:
+      - CODEX_HOME=/app/.codex
     volumes:
       - ..:/app
