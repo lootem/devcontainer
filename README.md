@@ -88,19 +88,6 @@ Use full mode for structural template changes or feature-selection changes. With
 ```
 
 The metadata is authoritative. If enabled Dockerfile features drift from it, update stops unless `--force` explicitly acknowledges that drift. Branch installs keep tracking their branch; an install pinned to a commit remains frozen until `--ref` replaces it.
-### Prefer a prebuilt image?
-
-If you just want to `docker run`, a prebuilt image is on [Docker Hub](https://hub.docker.com/repository/docker/lootemsec/devcontainer) as a rolling,
-multi-arch (**amd64 + arm64**) tag (rebuilt on every Dockerfile change on `main`):
-
-```bash
-docker pull lootemsec/devcontainer:all      # every language + cloud CLI
-```
-
-This single `:all` tag includes every language plus the AWS/Azure CLIs,
-PowerShell, and all supported AI CLIs, including Kiro. For
-reproducible, pinned, supply-chain-gated, per-language builds, use `install.sh`
-instead.
 
 ## What you get
 

@@ -901,6 +901,17 @@ test_kiro_build_validation_contract() {
   assert_contains "$wf" 'schedule:'
 }
 
+test_dockerhub_publishing_is_retired() {
+  local wf="$REPO_ROOT/.github/workflows/build.yml"
+  if grep -RqiE "dockerhub|lootemsec/devcontainer|push-by-digest|imagetools create" "$REPO_ROOT/.github/workflows" "$REPO_ROOT/README.md"; then
+    fail "Docker Hub publishing or pull instructions remain"
+  else
+    ok "Docker Hub publishing and pull instructions are absent"
+  fi
+  assert_contains "$wf" "if: needs.detect.outputs.dockerfile == 'true'"
+  assert_contains "$wf" "push: false"
+}
+
 test_provider_mappings_are_explicit_and_commented() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -1374,6 +1385,7 @@ TESTS=(
   test_kiro_dependency_lock_command_is_atomic
   test_kiro_renovate_contract
   test_kiro_build_validation_contract
+  test_dockerhub_publishing_is_retired
   test_provider_mappings_are_explicit_and_commented
   test_native_config_merge_preserves_unrelated_keys
   test_cli_deselection_removes_active_config_only
