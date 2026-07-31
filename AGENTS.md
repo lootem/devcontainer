@@ -5,7 +5,7 @@
 A **dev container scaffolding template**. It is not an application — it is a
 repository that gets *stamped out* into other repositories. A user runs one
 command (`curl -fsSL https://ltm.sh/dev | bash`, or `./install.sh` from a
-clone), picks one or more languages and AI CLIs (Claude, Codex, and/or OpenCode), and
+clone), picks one or more languages and AI CLIs (Claude, Codex, OpenCode, and/or Kiro), and
 gets a ready-to-open VS Code Dev Container plus editor config, `.gitignore`, and
 native project-local configuration for each selected CLI.
 
@@ -30,7 +30,7 @@ generated projects instead get the clean `templates/docker-compose.yml`.
 | `test.sh` | Verification harness for `install.sh` — see "Testing / verifying changes" below. |
 | `.devcontainer/` | The baseline container **for this repo itself**. `Dockerfile` (feature-flagged via `ARG`s, all defaulting `false`), `docker-compose.yml` (carries maintainer-only `build.args`), `devcontainer.json`, `awscli.pub`. |
 | `templates/` | Fragments merged/copied into generated projects. `templates/basesettings.json` and `templates/basegitignore` are the always-included base; `templates/<lang>/` holds each language's extras; `templates/docker-compose.yml` is the **clean** (no-args) compose shipped to generated projects. |
-| `skills/` | Curated skills (portable `SKILL.md` format), optionally copied with `--skills` into each selected CLI's skills dir — `.claude/skills/` for Claude, `.agents/skills/` for Codex, `.opencode/skills/` for OpenCode. Skills tagged `metadata: author: mattpocock` are re-vendored from upstream by `skills/vendor-matt-pocock-skills.sh` (maintainer-only, manual — see its `--help`); excluded from the `--skills` copy. |
+| `skills/` | Curated skills (portable `SKILL.md` format), optionally copied with `--skills` into each selected CLI's skills dir — `.claude/skills/` for Claude, `.agents/skills/` for Codex, `.opencode/skills/` for OpenCode, `.kiro/skills/` for Kiro. Skills tagged `metadata: author: mattpocock` are re-vendored from upstream by `skills/vendor-matt-pocock-skills.sh` (maintainer-only, manual — see its `--help`); excluded from the `--skills` copy. |
 | `README.md` | User-facing docs. |
 
 `.claude/` is local state (settings, history, skills) — untracked scaffolding
@@ -71,7 +71,8 @@ output, not source. Don't treat files under it as project code.
   provider mappings in Compose are explicit and commented by default.
 - **Skills** — with `--skills`, `skills/` is copied into each selected CLI's
   skills dir (`cli_skills_dir()`: `claude→.claude/skills`,
-  `codex→.agents/skills`, `opencode→.opencode/skills`).
+  `codex→.agents/skills`, `opencode→.opencode/skills`,
+  `kiro→.kiro/skills`).
 
 Whole-file writes (Dockerfile, devcontainer.json, the first generated
 docker-compose.yml, per-language extras, skills) go through `may_write()`
@@ -140,6 +141,10 @@ block (e.g. `GO_URL`, `NODE_VER`, `DOTNET_VER`, `CLAUDE_VER`, `CODEX_VER`). Keep
 the `ARG X=false` + `RUN if [ "$X" = "true" ]` shape so the feature stays opt-in,
 and add the version `ARG` to `renovate.json5`'s bare-ARG alternation if it has a
 `# renovate:` annotation (`test_renovate_regex_covers_pins` checks this).
+Architecture-specific dependencies may instead use
+`.devcontainer/dependencies.lock.json` when their issue explicitly requires a
+grouped machine-readable lock; their feature toggle still remains an
+`ARG X=false`.
 
 ### Change editor defaults for everyone
 Edit `templates/basesettings.json` (merged into every project). Language-specific

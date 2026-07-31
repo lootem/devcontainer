@@ -44,7 +44,7 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 | --- | --- |
 | `-l`, `--language <list>` | Language(s): `python`, `go`, `js`, `dotnet`. Comma-combine, or omit to be prompted. |
 | `-T`, `--tool <list>` | Cloud/shell tool(s): `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`. Comma-combine. |
-| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`, `opencode`. Comma-combine, or omit for none. |
+| `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`, `opencode`, `kiro`. Comma-combine, or omit for none. |
 | `--skills` | Also bring the curated skills, into each selected CLI's skills dir. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to current folder). |
 | `-f`, `--force` | Overwrite existing files without asking. |
@@ -56,19 +56,24 @@ Enabling a tool only flips its Dockerfile build arg (no editor/`.gitignore`
 entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
 
 Selecting an AI CLI installs its binary for direct execution and gives it
-project-local native state (`.claude/`, `.codex/`, or `.opencode/`). With
+project-local native state (`.claude/`, `.codex/`, `.opencode/`, or `.kiro/`). With
 `--skills`, the curated skills are copied into `.claude/skills/`,
-`.agents/skills/`, or `.opencode/skills/`. Passing `--skills` without at least
-one selected CLI is an error.
+`.agents/skills/`, `.opencode/skills/`, or `.kiro/skills/`. Passing `--skills`
+without at least one selected CLI is an error.
 
 OpenCode installs the architecture-specific headless CLI package from npm. The
 build verifies the package tarball against npm's published SHA-512 integrity
 value before extracting `opencode`.
 
+Kiro installs the official headless GNU/Linux artifact for the build's actual
+architecture. Both amd64 and arm64 versioned URLs and SHA-256 values are pinned
+in `.devcontainer/dependencies.lock.json`; Kiro's background updater is disabled.
+
 ### Keeping a generated repo up to date
 
 Every generated repo gets a `.devcontainer/update.sh`, manual only. By default
-it runs **surgical**: it fetches upstream's `Dockerfile` + `devcontainer.json`
+it runs **surgical**: it fetches upstream's `Dockerfile`, dependency lock, and
+`devcontainer.json`
 (parsed only, never executed) and bumps in place every pinned version this
 repo already tracks - each `# renovate:`-annotated `ARG`, the base image
 `@sha256:` digest, and `devcontainer.json` extension `@version` pins - for keys
@@ -101,8 +106,8 @@ multi-arch (**amd64 + arm64**) tag (rebuilt on every Dockerfile change on `main`
 docker pull lootemsec/devcontainer:all      # every language + cloud CLI
 ```
 
-This single `:all` tag includes every language plus the AWS/Azure CLIs and
-PowerShell; it ships Codex pre-installed with update checks disabled. For
+This single `:all` tag includes every language plus the AWS/Azure CLIs,
+PowerShell, and all supported AI CLIs, including Kiro. For
 reproducible, pinned, supply-chain-gated, per-language builds, use `install.sh`
 instead.
 
@@ -112,7 +117,7 @@ Open the folder in [VS Code](https://code.visualstudio.com/) with the
 [Dev Containers](https://containers.dev/) extension and start working: a dev
 container tuned for your language(s), with editor settings, optional recommended
 extensions, and a starter `.gitignore`. Selected AI CLIs run by their native
-command (`claude`, `codex`, or `opencode`) and keep configuration, credentials,
+command (`claude`, `codex`, `opencode`, or `kiro-cli`) and keep configuration, credentials,
 and history in ignored workspace directories so they survive container rebuilds.
 OpenCode's native `/connect` credentials persist under `.opencode/data`.
 
@@ -137,6 +142,10 @@ Generated configuration disables CLI-managed updates while preserving unrelated
 settings. The pinned container image remains the update boundary: rerun the
 generator or rebuild against a newer ref to update a CLI.
 
+Kiro supports interactive browser authentication persisted under `.kiro`; for
+headless use, set `KIRO_API_KEY` in `.env` and uncomment its explicit Compose
+mapping.
+
 ## Built to reduce supply-chain risk
 
 - **Everything is pinned** - base image to an exact digest, each tool to a named
@@ -149,6 +158,20 @@ generator or rebuild against a newer ref to update a CLI.
 image-digest workflow open PRs but never merge blindly: minor/patch only (never
 major), a 7-day supply-chain age gate, and the container must build with every
 feature flag on (`build.yml`) before merge.
+
+Kiro is a multi-artifact exception to ordinary single-pin updates. Renovate
+dates releases from exact `kiro-cli <semver>` Homebrew cask commits, then runs
+the narrowly allowlisted command below only after the age gate passes. The
+command downloads both official Linux artifacts and atomically replaces both
+hash records; Kiro updates never automerge.
+
+```bash
+./install.sh dependency-lock kiro <version>
+```
+
+The same dependency lock records the standalone AWS CLI signing key's path,
+fingerprint, and expiry. The monthly key-refresh workflow verifies a live AWS
+artifact before updating the armored key and lock metadata together.
 
 **VS Code extensions.** Those on [OpenVSX](https://open-vsx.org) are pinned to an
 exact version (`publisher.name@x.y.z`) and tracked by Renovate via a custom

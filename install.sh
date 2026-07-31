@@ -59,6 +59,7 @@ cli_arg() {
     claude) echo "CLAUDECODE" ;;
     codex)  echo "CODEX" ;;
     opencode) echo "OPENCODE" ;;
+    kiro) echo "KIRO" ;;
     *)      return 1 ;;
   esac
 }
@@ -69,10 +70,11 @@ cli_skills_dir() {
     claude) echo ".claude/skills" ;;
     codex)  echo ".agents/skills" ;;
     opencode) echo ".opencode/skills" ;;
+    kiro) echo ".kiro/skills" ;;
     *)      return 1 ;;
   esac
 }
-VALID_CLIS="claude codex opencode"
+VALID_CLIS="claude codex opencode kiro"
 
 # --- TTY-aware helpers ----------------------------------------------------------
 HAVE_TTY=false
@@ -172,6 +174,81 @@ Usage: install.sh [options]
   -h, --help             Show this help
 EOF
 }
+
+update_kiro_dependency_lock() { # update_kiro_dependency_lock <semver>
+  local version="$1"
+  case "$version" in
+    *[!0-9.]*|.*|*.|*..*) die "Kiro version must be a three-part semver (for example 2.15.2)." ;;
+  esac
+  [ "$(printf '%s' "$version" | awk -F. '{ print NF }')" -eq 3 ] \
+    || die "Kiro version must be a three-part semver (for example 2.15.2)."
+
+  command -v curl >/dev/null 2>&1 || die "Cannot update the dependency lock without 'curl'."
+  command -v jq >/dev/null 2>&1 || die "Cannot update the dependency lock without 'jq'."
+  command -v sha256sum >/dev/null 2>&1 || die "Cannot update the dependency lock without 'sha256sum'."
+
+  local script_dir lock tmp final_lock base arch upstream_arch filename url archive hash
+  local curl_args=(-fsSL)
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  lock="$script_dir/.devcontainer/dependencies.lock.json"
+  [ -f "$lock" ] || die "Dependency lock not found: $lock"
+  jq -e '.schemaVersion == 1 and (.kiro | type == "object")' "$lock" >/dev/null \
+    || die "Existing dependency lock is missing schemaVersion 1 or the Kiro records."
+
+  tmp="$(mktemp -d)"
+  base="${KIRO_DOWNLOAD_BASE_URL:-https://desktop-release.q.us-east-1.amazonaws.com}"
+  if [ -z "${KIRO_DOWNLOAD_BASE_URL:-}" ]; then
+    curl_args=(--proto '=https' --tlsv1.2 -fsSL)
+  fi
+  for arch in amd64 arm64; do
+    case "$arch" in
+      amd64) upstream_arch="x86_64" ;;
+      arm64) upstream_arch="aarch64" ;;
+    esac
+    filename="kirocli-${upstream_arch}-linux.tar.xz"
+    url="${base%/}/${version}/${filename}"
+    archive="$tmp/$filename"
+    if ! curl "${curl_args[@]}" "$url" -o "$archive"; then
+      rm -rf "$tmp"
+      die "Could not download Kiro $arch artifact for version $version."
+    fi
+    hash="$(sha256sum "$archive" | awk '{ print $1 }')"
+    case "$hash" in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+      *) rm -rf "$tmp"; die "Could not calculate the Kiro $arch SHA-256." ;;
+    esac
+    [ "${#hash}" -eq 64 ] \
+      || { rm -rf "$tmp"; die "Could not calculate the Kiro $arch SHA-256."; }
+    jq --arg arch "$arch" --arg version "$version" --arg url "$url" --arg sha256 "$hash" \
+      '.kiro[$arch] = {version: $version, url: $url, sha256: $sha256}' \
+      "$lock" > "$tmp/lock.next"
+    mv "$tmp/lock.next" "$tmp/lock.work"
+    lock="$tmp/lock.work"
+  done
+
+  jq -e '
+    .schemaVersion == 1
+    and (.kiro.amd64.version == .kiro.arm64.version)
+    and (.kiro.amd64.sha256 | test("^[0-9a-f]{64}$"))
+    and (.kiro.arm64.sha256 | test("^[0-9a-f]{64}$"))
+  ' "$lock" >/dev/null || { rm -rf "$tmp"; die "Generated Kiro dependency lock failed validation."; }
+  final_lock="$(mktemp "$script_dir/.devcontainer/.dependencies.lock.XXXXXX")"
+  cp "$lock" "$final_lock" \
+    || { rm -f "$final_lock"; rm -rf "$tmp"; die "Could not prepare the atomic dependency-lock replacement."; }
+  chmod 0644 "$final_lock"
+  mv "$final_lock" "$script_dir/.devcontainer/dependencies.lock.json"
+  rm -rf "$tmp"
+  info "Locked Kiro $version for amd64 and arm64."
+}
+
+# Maintainer-only dependency refresh path. It is intentionally a narrow
+# subcommand so Renovate can allowlist it without exposing a general shell.
+if [ "${1:-}" = "dependency-lock" ]; then
+  [ "$#" -eq 3 ] && [ "${2:-}" = "kiro" ] \
+    || die "Usage: install.sh dependency-lock kiro <version>"
+  update_kiro_dependency_lock "$3"
+  exit 0
+fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -420,7 +497,7 @@ merge_settings_json() { # merge_settings_json <dest>  (reads generated JSON on s
   info "Merged $dest"
 }
 
-merge_json_boolean() { # merge_json_boolean <dest> <key> <true|false>
+merge_json_boolean() { # merge_json_boolean <dest> <dotted-key-path> <true|false>
   local dest="$1" key="$2" value="$3" existing
   mkdir -p "$(dirname "$dest")"
   if [ -e "$dest" ]; then
@@ -429,7 +506,7 @@ merge_json_boolean() { # merge_json_boolean <dest> <key> <true|false>
     existing='{}'
   fi
   printf '%s' "$existing" | jq --arg key "$key" --argjson value "$value" \
-    '.[$key] = $value' > "$dest.tmp"
+    'setpath(($key | split(".")); $value)' > "$dest.tmp"
   mv "$dest.tmp" "$dest"
   info "Merged $dest"
 }
@@ -500,6 +577,9 @@ if has_cli opencode; then
   printf '%s\n' \
     '      - ../.opencode/data:/home/vscode/.local/share/opencode' >> "$CLI_VOLUMES"
 fi
+if has_cli kiro; then
+  printf '%s\n' '      KIRO_HOME: /app/.kiro' >> "$CLI_ENV"
+fi
 [ -s "$CLI_ENV" ] || printf '%s\n' '      {}' >> "$CLI_ENV"
 render_compose() { # render_compose <template-or-existing-compose>
   awk -v env_file="$CLI_ENV" -v volumes_file="$CLI_VOLUMES" '
@@ -550,8 +630,11 @@ fi
 has_cli claude && merge_json_boolean "$TARGET/.claude/settings.json" autoUpdates false
 has_cli codex && merge_codex_native_config "$TARGET/.codex/config.toml"
 has_cli opencode && merge_json_boolean "$TARGET/.opencode/opencode.json" autoupdate false
+has_cli kiro && merge_json_boolean "$TARGET/.kiro/settings/cli.json" app.disableAutoupdates true
 
 [ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"
+[ -f "$DEVC/dependencies.lock.json" ] \
+  && copy_verbatim "$DEVC/dependencies.lock.json" "$TARGET/.devcontainer/dependencies.lock.json"
 if [ -f "$DEVC/update.sh" ]; then
   copy_verbatim "$DEVC/update.sh" "$TARGET/.devcontainer/update.sh"
   [ -f "$TARGET/.devcontainer/update.sh" ] && chmod +x "$TARGET/.devcontainer/update.sh"
@@ -645,8 +728,8 @@ done
 
 # --- Skills (optional) — copied into each selected CLI's skills dir ---------------
 # claude → .claude/skills, codex → .agents/skills, opencode →
-# .opencode/skills (same SKILL.md format). All are kept committable by the
-# generated .gitignore.
+# .opencode/skills, kiro → .kiro/skills (same SKILL.md format). All are kept
+# committable by the generated .gitignore.
 SKILLS_DIRS=()
 if [ "$WANT_SKILLS" = true ]; then
   if [ -d "$SRC/skills" ]; then

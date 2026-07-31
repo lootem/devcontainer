@@ -8,6 +8,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Weekly multi-architecture validation catches withdrawn Kiro artifacts.
+    - cron: '0 13 * * 3'
   workflow_dispatch:
 
 jobs:
@@ -34,7 +37,11 @@ jobs:
           # Build when we can't compute a diff (first push / missing base) to stay safe.
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base" 2>/dev/null; then
             changed=true
-          elif git diff --name-only "$base" "$head" | grep -qx '.devcontainer/Dockerfile'; then
+          # A .devcontainer/dependencies.lock.json-only Kiro update is
+          # build-relevant even when the Dockerfile itself is unchanged. This
+          # is the kiro-changing PR validation gate.
+          elif git diff --name-only "$base" "$head" | grep -qE \
+            '^(\.devcontainer/(Dockerfile|dependencies\.lock\.json)|install\.sh|renovate\.json5|\.github/(renovate-global\.json5|workflows/build\.yml)|templates/(basegitignore|docker-compose\.yml)|\.env\.example)$'; then
             changed=true
           else
             changed=false
@@ -80,6 +87,8 @@ jobs:
           build-args: |
             CLAUDECODE=true
             CODEX=true
+            OPENCODE=true
+            KIRO=true
             GOLANG=true
             PYTHON=true
             NODEJS=true
@@ -132,6 +141,8 @@ jobs:
           build-args: |
             CLAUDECODE=true
             CODEX=true
+            OPENCODE=true
+            KIRO=true
             GOLANG=true
             PYTHON=true
             NODEJS=true

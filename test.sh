@@ -55,7 +55,14 @@ make_local_install() { # make_local_install -> prints path to a patched install.
   grep -qF "$CLONE_LINE" "$REPO_ROOT/install.sh" \
     || { echo "test.sh: install.sh's git clone line has changed — update CLONE_LINE in test.sh" >&2; exit 1; }
   awk -v old1="$CLONE_LINE" -v old2="$CLONE_LINE2" -v root="$REPO_ROOT" '
-    $0 == old1 { getline nextline; if (nextline == old2) { print "cp -r \"" root "/.\" \"$SRC\" >/dev/null 2>&1 || die \"local copy failed\""; next } }
+    $0 == old1 {
+      getline nextline
+      if (nextline == old2) {
+        print "cp -r \"" root "/.devcontainer\" \"" root "/templates\" \"" root "/skills\" \"$SRC/\" >/dev/null 2>&1 || die \"local copy failed\""
+        print "cp \"" root "/.env.example\" \"$SRC/.env.example\" >/dev/null 2>&1 || die \"local copy failed\""
+        next
+      }
+    }
     { print }
   ' "$REPO_ROOT/install.sh" > "$patched"
   chmod +x "$patched"
@@ -454,6 +461,22 @@ test_update_script_full_round_trip() {
   assert_contains "$d/.devcontainer/docker-compose.yml" '      {}'
 }
 
+test_update_script_full_round_trip_kiro() {
+  local d patched_update
+  d="$(new_dir)"
+  run_install "$d" --language go --cli kiro --force
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
+  patched_update="$(make_local_update "$d/.devcontainer/update.sh")"
+  if ! ( cd "$d" && bash "$patched_update" --full -- --force ) >/tmp/test.sh.update_kiro.log 2>&1; then
+    cat /tmp/test.sh.update_kiro.log
+    fail "update.sh --full preserves Kiro selection"
+    return
+  fi
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'KIRO_HOME: /app/.kiro'
+  assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro update setting survives full round-trip"
+}
+
 test_update_script_surgical_bumps_and_preserves_edits() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force --extensions
@@ -537,6 +560,14 @@ test_update_script_surgical_transplants_keys() {
   cp "$REPO_ROOT/.devcontainer/Dockerfile" "$up/.devcontainer/Dockerfile"
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   cp "$REPO_ROOT/.devcontainer/awscli.pub" "$up/.devcontainer/awscli.pub"
+  cp "$REPO_ROOT/.devcontainer/dependencies.lock.json" "$up/.devcontainer/dependencies.lock.json"
+  jq '
+    .kiro.amd64.version = "9.9.9"
+    | .kiro.arm64.version = "9.9.9"
+    | .kiro.amd64.sha256 = ("a" * 64)
+    | .kiro.arm64.sha256 = ("b" * 64)
+  ' "$up/.devcontainer/dependencies.lock.json" > "$up/.devcontainer/dependencies.lock.json.tmp"
+  mv "$up/.devcontainer/dependencies.lock.json.tmp" "$up/.devcontainer/dependencies.lock.json"
   sed -i 's/ARG MS_KEY_FP=BC528686B50D79E339D3721CEB3E94ADBE1229CF/ARG MS_KEY_FP=DEADBEEF0000000000000000000000000000000A/' \
     "$up/.devcontainer/Dockerfile"
   sed -i 's/ARG MS_KEY_FP_2025=AA86F75E427A19DD33346403EE4D7792F748182B/ARG MS_KEY_FP_2025=DEADBEEF0000000000000000000000000000000B/' \
@@ -562,6 +593,12 @@ test_update_script_surgical_transplants_keys() {
   assert_contains "$d/.devcontainer/Dockerfile" 'EXPECTED="1111111111111111111111111111111111111C"'
   assert_contains "$d/.devcontainer/Dockerfile" 'EXPECTED="2222222222222222222222222222222222222D"'
   assert_contains "$d/.devcontainer/awscli.pub" '# upstream-added trailer'
+  assert_json_has "$d/.devcontainer/dependencies.lock.json" '
+    .kiro.amd64.version == "9.9.9"
+    and .kiro.arm64.version == "9.9.9"
+    and .kiro.amd64.sha256 == ("a" * 64)
+    and .kiro.arm64.sha256 == ("b" * 64)
+  ' "surgical update transplants the grouped dependency lock"
 
   # No cross-contamination: each new EXPECTED value appears exactly once (a
   # file-wide, unscoped replace would have let one clobber the other).
@@ -682,6 +719,21 @@ test_cli_opencode_only() {
   assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode native updates disabled"
 }
 
+test_cli_kiro_only() {
+  local d; d="$(new_dir)"
+  run_install "$d" --cli kiro --language go --skills --force
+  assert_file_exists "$d/.kiro/skills/code-review/SKILL.md"
+  assert_file_exists "$d/.devcontainer/dependencies.lock.json"
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'KIRO_HOME: /app/.kiro'
+  assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro background auto-updates disabled"
+  assert_contains "$d/.gitignore" '.kiro/*'
+  assert_contains "$d/.gitignore" '!.kiro/skills/'
+}
+
 test_cli_none_is_native_and_empty() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -690,7 +742,8 @@ test_cli_none_is_native_and_empty() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=false'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG OPENCODE=false'
-  if grep -qE '^[[:space:]]+(CLAUDE_CONFIG_DIR|CODEX_HOME|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR):' \
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG KIRO=false'
+  if grep -qE '^[[:space:]]+(CLAUDE_CONFIG_DIR|CODEX_HOME|OPENCODE_CONFIG|OPENCODE_CONFIG_DIR|KIRO_HOME):' \
       "$d/.devcontainer/docker-compose.yml"; then
     fail "no-CLI scaffold has active CLI state configuration"
   else
@@ -700,7 +753,7 @@ test_cli_none_is_native_and_empty() {
 
 test_cli_native_compose_configuration() {
   local d; d="$(new_dir)"
-  run_install "$d" --cli claude,codex,opencode --language go --force
+  run_install "$d" --cli claude,codex,opencode,kiro --language go --force
   assert_file_not_exists "$d/claude.sh"
   assert_file_not_exists "$d/codex.sh"
   assert_contains "$d/.devcontainer/docker-compose.yml" 'CLAUDE_CONFIG_DIR: /app/.claude'
@@ -710,11 +763,102 @@ test_cli_native_compose_configuration() {
   assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG_DIR: /app/.opencode'
   assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_DISABLE_AUTOUPDATE: "1"'
   assert_contains "$d/.devcontainer/docker-compose.yml" '../.opencode/data:/home/vscode/.local/share/opencode'
+  assert_contains "$d/.devcontainer/docker-compose.yml" 'KIRO_HOME: /app/.kiro'
   if grep -qE '^[[:space:]]+XDG_DATA_HOME:' "$d/.devcontainer/docker-compose.yml"; then
     fail "generated compose changes XDG_DATA_HOME globally"
   else
     ok "generated compose leaves XDG_DATA_HOME unchanged"
   fi
+}
+
+test_kiro_dependency_lock_contract() {
+  local lock="$REPO_ROOT/.devcontainer/dependencies.lock.json"
+  local dockerfile="$REPO_ROOT/.devcontainer/Dockerfile"
+  assert_json_valid "$lock"
+  assert_json_has "$lock" '.schemaVersion == 1' "dependency lock schema version"
+  assert_json_has "$lock" '
+    (.kiro.amd64.version == .kiro.arm64.version)
+    and (.kiro.amd64.url | test("/[0-9]+\\.[0-9]+\\.[0-9]+/kirocli-x86_64-linux\\.tar\\.xz$"))
+    and (.kiro.arm64.url | test("/[0-9]+\\.[0-9]+\\.[0-9]+/kirocli-aarch64-linux\\.tar\\.xz$"))
+    and (.kiro.amd64.sha256 | test("^[0-9a-f]{64}$"))
+    and (.kiro.arm64.sha256 | test("^[0-9a-f]{64}$"))
+  ' "Kiro has matching versioned amd64/arm64 tar.xz records with SHA-256"
+  assert_json_has "$lock" '
+    .awscli.signingKey.path == ".devcontainer/awscli.pub"
+    and .awscli.signingKey.fingerprint == "FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
+    and (.awscli.signingKey.expires | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+  ' "AWS CLI signing-key metadata registered"
+  assert_contains "$dockerfile" 'source=.devcontainer/dependencies.lock.json'
+  assert_contains "$dockerfile" 'Unsupported Kiro architecture'
+  assert_contains "$dockerfile" '.kiro.amd64.url'
+  assert_contains "$dockerfile" '.kiro.arm64.url'
+  assert_contains "$dockerfile" '.kiro.amd64.sha256'
+  assert_contains "$dockerfile" '.kiro.arm64.sha256'
+  assert_contains "$dockerfile" 'sha256sum -c -'
+  assert_contains "$dockerfile" 'tar -xJf'
+}
+
+test_kiro_dependency_lock_command_is_atomic() {
+  local root fixtures lock before out
+  root="$(new_dir)"
+  fixtures="$(new_dir)"
+  mkdir -p "$root/.devcontainer" "$fixtures/9.8.7"
+  cp "$REPO_ROOT/install.sh" "$root/install.sh"
+  cp "$REPO_ROOT/.devcontainer/dependencies.lock.json" "$root/.devcontainer/dependencies.lock.json"
+  printf 'amd64 fixture\n' > "$fixtures/9.8.7/kirocli-x86_64-linux.tar.xz"
+  printf 'arm64 fixture\n' > "$fixtures/9.8.7/kirocli-aarch64-linux.tar.xz"
+
+  (
+    cd "$root"
+    KIRO_DOWNLOAD_BASE_URL="file://$fixtures" bash ./install.sh dependency-lock kiro 9.8.7
+  ) >"$root/lock.log" 2>&1 || {
+    cat "$root/lock.log"
+    fail "dependency-lock command updates both Kiro records"
+    return
+  }
+  lock="$root/.devcontainer/dependencies.lock.json"
+  assert_json_has "$lock" '
+    .kiro.amd64.version == "9.8.7"
+    and .kiro.arm64.version == "9.8.7"
+    and .kiro.amd64.sha256 == "c62de6e3b306ad3a6d93b3dd9b5a2c781dee4350573814f59838116ff5bcf817"
+    and .kiro.arm64.sha256 == "791986e14fcaeedc7e87a870f0a6cff9a7b1eaf47d73c7b87d3987695a4f9819"
+  ' "dependency-lock command hashes and groups both architectures"
+
+  before="$(sha256sum "$lock" | cut -d' ' -f1)"
+  mkdir -p "$fixtures/9.8.8"
+  printf 'amd64 replacement\n' > "$fixtures/9.8.8/kirocli-x86_64-linux.tar.xz"
+  if out="$(
+    cd "$root"
+    KIRO_DOWNLOAD_BASE_URL="file://$fixtures" bash ./install.sh dependency-lock kiro 9.8.8 2>&1
+  )"; then
+    fail "dependency-lock command should fail when one architecture is unavailable"
+  else
+    ok "dependency-lock command fails when one architecture is unavailable"
+  fi
+  assert_contains <(printf '%s' "$out") "arm64"
+  assert_eq "$(sha256sum "$lock" | cut -d' ' -f1)" "$before" "failed lock update leaves the existing lock byte-identical"
+}
+
+test_kiro_renovate_contract() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  local global="$REPO_ROOT/.github/renovate-global.json5"
+  assert_contains "$renovate" '^kiro-cli [0-9]+\\.[0-9]+\\.[0-9]+$'
+  assert_contains "$renovate" 'commit.message'
+  assert_contains "$renovate" 'commit.committer.date'
+  assert_contains "$renovate" './install.sh dependency-lock kiro {{{newValue}}}'
+  assert_contains "$renovate" 'automerge: false'
+  assert_contains "$global" 'allowedCommands'
+  assert_contains "$global" '^\\./install\\.sh dependency-lock kiro [0-9]+\\.[0-9]+\\.[0-9]+$'
+}
+
+test_kiro_build_validation_contract() {
+  local wf="$REPO_ROOT/.github/workflows/build.yml"
+  assert_contains "$wf" '.devcontainer/dependencies.lock.json'
+  assert_contains "$wf" 'KIRO=true'
+  assert_contains "$wf" 'kiro-changing'
+  assert_contains "$wf" 'install\.sh'
+  assert_contains "$wf" 'renovate\.json5'
+  assert_contains "$wf" 'schedule:'
 }
 
 test_provider_mappings_are_explicit_and_commented() {
@@ -726,7 +870,7 @@ test_provider_mappings_are_explicit_and_commented() {
     AWS_BEARER_TOKEN_BEDROCK AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
     AWS_SESSION_TOKEN CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_FOUNDRY_RESOURCE \
     ANTHROPIC_FOUNDRY_API_KEY OPENAI_API_KEY AZURE_OPENAI_API_KEY \
-    AZURE_RESOURCE_NAME; do
+    AZURE_RESOURCE_NAME KIRO_API_KEY; do
     assert_contains "$d/.devcontainer/docker-compose.yml" "# $var: \${$var:-}"
     assert_contains "$d/.env.example" "$var="
   done
@@ -739,11 +883,12 @@ test_provider_mappings_are_explicit_and_commented() {
 
 test_native_config_merge_preserves_unrelated_keys() {
   local d; d="$(new_dir)"
-  mkdir -p "$d/.claude" "$d/.codex" "$d/.opencode"
+  mkdir -p "$d/.claude" "$d/.codex" "$d/.opencode" "$d/.kiro/settings"
   printf '{"permissions":{"allow":["Bash(git status)"]}}\n' > "$d/.claude/settings.json"
   printf 'model = "gpt-test"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
   printf '{"model":"anthropic/test"}\n' > "$d/.opencode/opencode.json"
-  run_install "$d" --cli claude,codex,opencode --language go --force
+  printf '{"chat":{"greeting":{"enabled":false}}}\n' > "$d/.kiro/settings/cli.json"
+  run_install "$d" --cli claude,codex,opencode,kiro --language go --force
   assert_json_has "$d/.claude/settings.json" '.autoUpdates == false' "Claude auto-updates disabled"
   assert_json_has "$d/.claude/settings.json" '.permissions.allow[0] == "Bash(git status)"' "Claude config preserved"
   assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
@@ -752,6 +897,8 @@ test_native_config_merge_preserves_unrelated_keys() {
   assert_contains "$d/.codex/config.toml" '[history]'
   assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode auto-updates disabled"
   assert_json_has "$d/.opencode/opencode.json" '.model == "anthropic/test"' "OpenCode config preserved"
+  assert_json_has "$d/.kiro/settings/cli.json" '.app.disableAutoupdates == true' "Kiro auto-updates disabled"
+  assert_json_has "$d/.kiro/settings/cli.json" '.chat.greeting.enabled == false' "Kiro config preserved"
 }
 
 test_cli_deselection_removes_active_config_only() {
@@ -1107,6 +1254,16 @@ test_ms_key_refresh_workflow_no_automerge() {
   fi
 }
 
+test_aws_key_refresh_updates_lock_atomically() {
+  local wf="$REPO_ROOT/.github/workflows/awscli-key-refresh.yml"
+  assert_file_exists "$wf"
+  assert_contains "$wf" 'LOCK_FILE: .devcontainer/dependencies.lock.json'
+  assert_contains "$wf" '.awscli.signingKey.fingerprint'
+  assert_contains "$wf" '.awscli.signingKey.expires'
+  assert_contains "$wf" 'mv "$LOCK_TMP" "$LOCK_FILE"'
+  assert_contains "$wf" 'gpg --verify a.sig a.zip'
+}
+
 test_gitignore_merge() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --force
@@ -1161,6 +1318,7 @@ TESTS=(
   test_no_pcre_grep_in_shipped_scripts
   test_ms_key_pinning
   test_ms_key_refresh_workflow_no_automerge
+  test_aws_key_refresh_updates_lock_atomically
   test_gitignore_merge
   test_gitignore_secrets
   test_settings_merge_notty_keeps_existing
@@ -1169,8 +1327,13 @@ TESTS=(
   test_cli_codex_only
   test_cli_both_skills_both_dirs
   test_cli_opencode_only
+  test_cli_kiro_only
   test_cli_none_is_native_and_empty
   test_cli_native_compose_configuration
+  test_kiro_dependency_lock_contract
+  test_kiro_dependency_lock_command_is_atomic
+  test_kiro_renovate_contract
+  test_kiro_build_validation_contract
   test_provider_mappings_are_explicit_and_commented
   test_native_config_merge_preserves_unrelated_keys
   test_cli_deselection_removes_active_config_only
@@ -1180,6 +1343,7 @@ TESTS=(
   test_cli_codex_not_a_tool
   test_update_script_shipped_and_executable
   test_update_script_full_round_trip
+  test_update_script_full_round_trip_kiro
   test_update_script_surgical_bumps_and_preserves_edits
   test_update_script_surgical_skip_summary
   test_update_script_surgical_transplants_keys

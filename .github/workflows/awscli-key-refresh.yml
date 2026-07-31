@@ -21,6 +21,7 @@ env:
   KEY_ID: A6310ACC4672475C
   DOCS_URL: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-version.html
   KEY_FILE: .devcontainer/awscli.pub
+  LOCK_FILE: .devcontainer/dependencies.lock.json
 
 jobs:
   refresh:
@@ -38,6 +39,12 @@ jobs:
           GNUPGHOME="$OLD_HOME" gpg --batch --import "$KEY_FILE"
           CUR_EXP=$(GNUPGHOME="$OLD_HOME" gpg --batch --with-colons --list-keys "$KEY_ID" \
             | awk -F: '/^pub/{print $7; exit}')
+          CUR_EXP_ISO=$(date -u -d "@$CUR_EXP" +%Y-%m-%dT%H:%M:%SZ)
+          jq -e --arg path "$KEY_FILE" --arg fingerprint "$EXPECTED" --arg expires "$CUR_EXP_ISO" '
+            .awscli.signingKey.path == $path
+            and .awscli.signingKey.fingerprint == $fingerprint
+            and .awscli.signingKey.expires == $expires
+          ' "$LOCK_FILE" >/dev/null
 
           # --- Extract the candidate key block from the AWS docs page ---
           # The block is embedded verbatim in the HTML; strip the inline tags
@@ -73,6 +80,7 @@ jobs:
 
           NEW_EXP=$(gpg --batch --with-colons --list-keys "$KEY_ID" \
             | awk -F: '/^pub/{print $7; exit}')
+          NEW_EXP_ISO=$(date -u -d "@$NEW_EXP" +%Y-%m-%dT%H:%M:%SZ)
 
           echo "cur_exp=$CUR_EXP" >> "$GITHUB_OUTPUT"
           echo "new_exp=$NEW_EXP" >> "$GITHUB_OUTPUT"
@@ -80,9 +88,22 @@ jobs:
           echo "new_date=$(date -u -d "@$NEW_EXP" +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
           # Only bump when the fetched key extends expiry — ignores cosmetic
-          # re-encodings and avoids churn.
+          # re-encodings and avoids churn. Prepare and validate both files
+          # before replacing either, so a failed refresh can never open a PR
+          # with key material and lock metadata out of sync.
           if [ "$NEW_EXP" -gt "$CUR_EXP" ]; then
+            LOCK_TMP=$(mktemp)
+            jq --arg path "$KEY_FILE" --arg fingerprint "$EXPECTED" --arg expires "$NEW_EXP_ISO" '
+              .awscli.signingKey = {
+                path: $path,
+                fingerprint: $fingerprint,
+                expires: $expires
+              }
+            ' "$LOCK_FILE" > "$LOCK_TMP"
+            jq -e --arg expires "$NEW_EXP_ISO" \
+              '.awscli.signingKey.expires == $expires' "$LOCK_TMP" >/dev/null
             cp fetched.pub "$KEY_FILE"
+            mv "$LOCK_TMP" "$LOCK_FILE"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
           rm -f docs.html fetched.pub
@@ -100,6 +121,7 @@ jobs:
 
             - Fingerprint (unchanged): `${{ env.EXPECTED }}`
             - Expiry: `${{ steps.check.outputs.cur_date }}` → `${{ steps.check.outputs.new_date }}`
+            - Lock metadata: `${{ env.LOCK_FILE }}`
             - Source: ${{ env.DOCS_URL }}
 
             The fetched key was verified against a live AWS CLI artifact with

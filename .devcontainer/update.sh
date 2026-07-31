@@ -374,15 +374,17 @@ detect_enabled_langs() { # detect_enabled_langs <dockerfile> -> tokens, one per 
 run_surgical() {
   info "Surgical mode: transplanting pinned versions from $REPO@$REF (parse-only, never executed)"
 
-  local up_dockerfile up_devcontainer up_awscli_pub
+  local up_dockerfile up_devcontainer up_awscli_pub up_dependencies_lock
   up_dockerfile="$(mktemp)"
   up_devcontainer="$(mktemp)"
   up_awscli_pub="$(mktemp)"
-  trap 'rm -f "$up_dockerfile" "$up_devcontainer" "$up_awscli_pub"' RETURN
+  up_dependencies_lock="$(mktemp)"
+  trap 'rm -f "$up_dockerfile" "$up_devcontainer" "$up_awscli_pub" "$up_dependencies_lock"' RETURN
 
   fetch_upstream ".devcontainer/Dockerfile" "$up_dockerfile"
   fetch_upstream ".devcontainer/devcontainer.json" "$up_devcontainer"
   fetch_upstream_optional ".devcontainer/awscli.pub" "$up_awscli_pub" || true
+  fetch_upstream_optional ".devcontainer/dependencies.lock.json" "$up_dependencies_lock" || true
 
   local enabled_langs upstream_ext_pins
   enabled_langs="$(detect_enabled_langs "$DOCKERFILE")"
@@ -400,6 +402,8 @@ run_surgical() {
   transplant_expected "$DOCKERFILE" "$up_dockerfile" "claude-code.asc" "claude-code"
   transplant_expected "$DOCKERFILE" "$up_dockerfile" "awscli.pub" "awscli"
   transplant_file_verbatim "$REPO_ROOT/.devcontainer/awscli.pub" "$up_awscli_pub" "awscli.pub"
+  transplant_file_verbatim "$REPO_ROOT/.devcontainer/dependencies.lock.json" \
+    "$up_dependencies_lock" "dependencies.lock.json"
 
   echo
   info "bumped ${#BUMPED[@]} pin(s), skipped ${#SKIPPED_UPSTREAM_ONLY[@]} upstream-only, ${#SKIPPED_LOCAL_ONLY[@]} local-only"
@@ -436,6 +440,7 @@ arg_token() {
     CLAUDECODE) echo "claude" ;;
     CODEX)      echo "codex" ;;
     OPENCODE)   echo "opencode" ;;
+    KIRO)       echo "kiro" ;;
     *)          return 1 ;;
   esac
 }
@@ -449,7 +454,7 @@ run_full() {
     token="$(arg_token "$arg_name")" || continue
     case "$arg_name" in
       PYTHON|GOLANG|NODEJS|DOTNET) LANGS+=("$token") ;;
-      CLAUDECODE|CODEX|OPENCODE)   CLIS+=("$token") ;;
+      CLAUDECODE|CODEX|OPENCODE|KIRO) CLIS+=("$token") ;;
       *)                           TOOLS+=("$token") ;;
     esac
   # NB: extract NAME from each `ARG NAME=true` line with sed, not a PCRE
@@ -464,7 +469,8 @@ run_full() {
 
   if [ ${#CLIS[@]} -gt 0 ] && \
      { [ -d "$REPO_ROOT/.claude/skills" ] || [ -d "$REPO_ROOT/.agents/skills" ] \
-       || [ -d "$REPO_ROOT/.opencode/skills" ]; }; then
+       || [ -d "$REPO_ROOT/.opencode/skills" ] \
+       || [ -d "$REPO_ROOT/.kiro/skills" ]; }; then
     ARGS+=(--skills)
   fi
 
