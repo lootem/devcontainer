@@ -97,7 +97,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.202
+ARG CLAUDE_VER=2.1.207
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -143,7 +143,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_VER=1.26.4
+ARG GO_VER=1.26.5
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 # renovate: datasource=go depName=github.com/go-delve/delve
@@ -235,7 +235,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- AZCLI
 ARG AZCLI=false
 # renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
-ARG AZ_VER=2.87.0
+ARG AZ_VER=2.88.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$AZCLI" = "true" ]; then \
@@ -288,7 +288,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.35.14
+ARG AWS_VER=2.35.21
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
