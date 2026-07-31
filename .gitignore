@@ -7,3 +7,5 @@
 .handoffs/
 PRD-*.md
 .DS_Store
+docs/
+.scratch/
