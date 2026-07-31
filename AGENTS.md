@@ -197,3 +197,19 @@ Other checks worth running on any change:
   before `jq` merges, so keep comments only in `templates/`, not in files copied
   verbatim.
 - Keep Dockerfile features flag-gated and version-pinned via `ARG`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local Markdown under `.scratch/`; external PRs are not a
+triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`,
+and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
