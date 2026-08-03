@@ -24,7 +24,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.5
+ARG OPENCODE_VER=1.18.7
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
