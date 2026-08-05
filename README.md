@@ -58,7 +58,7 @@ entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
 Selecting an AI CLI installs its binary for direct execution and gives it
 project-local native state (`.claude/`, `.codex/`, `.opencode/`, or `.kiro/`). With
 `--skills`, the curated skills are copied into `.claude/skills/`,
-`.agents/skills/`, `.opencode/skills/`, or `.kiro/skills/`. Passing `--skills`
+`.codex/skills/`, `.opencode/skills/`, or `.kiro/skills/`. Passing `--skills`
 without at least one selected CLI is an error.
 
 OpenCode installs the architecture-specific headless CLI package from npm. The
