@@ -707,10 +707,10 @@ test_cli_codex_only() {
   run_install "$d" --cli codex --language go --skills --force
   assert_file_not_exists "$d/codex.sh"
   assert_file_not_exists "$d/claude.sh"
-  assert_file_exists "$d/.codex/skills/code-review/SKILL.md"
+  assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
   assert_file_not_exists "$d/.claude/skills/code-review/SKILL.md"
   # Vendor-only maintainer script must not leak into the copied skills dir.
-  assert_file_not_exists "$d/.codex/skills/vendor-matt-pocock-skills.sh"
+  assert_file_not_exists "$d/.agents/skills/vendor-matt-pocock-skills.sh"
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
   assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
@@ -737,7 +737,7 @@ test_cli_both_skills_both_dirs() {
   assert_file_not_exists "$d/claude.sh"
   assert_file_not_exists "$d/codex.sh"
   assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
-  assert_file_exists "$d/.codex/skills/code-review/SKILL.md"
+  assert_file_exists "$d/.agents/skills/code-review/SKILL.md"
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CODEX=true'
 }

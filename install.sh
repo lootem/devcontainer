@@ -617,11 +617,12 @@ cli_arg() {
     *)      return 1 ;;
   esac
 }
-# Where each CLI loads project-level skills from (same SKILL.md format).
+# Where each CLI loads project-level skills from. Claude reads .claude/skills;
+# Codex reads .agents/skills (same SKILL.md format).
 cli_skills_dir() {
   case "$1" in
     claude) echo ".claude/skills" ;;
-    codex)  echo ".codex/skills" ;;
+    codex)  echo ".agents/skills" ;;
     opencode) echo ".opencode/skills" ;;
     kiro) echo ".kiro/skills" ;;
     *)      return 1 ;;
@@ -1284,7 +1285,7 @@ done
 [ -f "$SRC/.env.example" ] && copy_verbatim "$SRC/.env.example" "$TARGET/.env.example"
 
 # --- Skills (optional) — copied into each selected CLI's skills dir ---------------
-# claude → .claude/skills, codex → .codex/skills, opencode →
+# claude → .claude/skills, codex → .agents/skills, opencode →
 # .opencode/skills, kiro → .kiro/skills (same SKILL.md format). All are kept
 # committable by the generated .gitignore.
 SKILLS_DIRS=()

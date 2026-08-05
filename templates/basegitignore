@@ -2,10 +2,10 @@
 .claude/*
 # Remove below to keep skills uncommitted
 !.claude/skills/
-.codex/*
-
+.codex/
+.agents/*
 # Remove below to keep skills uncommitted
-!.codex/skills/
+!.agents/skills/
 .opencode/*
 # Remove below to keep skills uncommitted
 !.opencode/skills/
