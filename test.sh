@@ -1060,7 +1060,9 @@ test_renovate_regex_covers_pins() {
 
 test_renovate_regex_covers_vendor_script_pin() {
   local renovate="$REPO_ROOT/renovate.json5"
+  local global="$REPO_ROOT/.github/renovate-global.json5"
   local vendor_script="$REPO_ROOT/skills/vendor-matt-pocock-skills.sh"
+  local vendor_rule
 
   grep -qF "git-refs" "$renovate" && ok "renovate.json5 has a git-refs customManager" \
     || fail "renovate.json5 is missing a git-refs customManager for the vendor script pin"
@@ -1076,6 +1078,20 @@ test_renovate_regex_covers_vendor_script_pin() {
   grep -qzP '# renovate: datasource=git-refs depName=\S+\nREF="[0-9a-f]{40}"' "$vendor_script" \
     && ok "the renovate annotation sits directly above REF= (matches renovate.json5's matchStrings)" \
     || fail "the renovate annotation isn't directly above REF= — renovate.json5's matchStrings won't match"
+
+  vendor_rule="$(awk '
+    index($0, "matchDepNames: [\"https://github.com/mattpocock/skills\"]") { found=1 }
+    found { print }
+    found && /^    },$/ { exit }
+  ' "$renovate")"
+  assert_contains <(printf '%s\n' "$vendor_rule") 'matchDepNames: ["https://github.com/mattpocock/skills"]'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'groupName: "Matt Pocock skills"'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'groupSlug: "matt-pocock-skills"'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'commands: ["./skills/vendor-matt-pocock-skills.sh"]'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'fileFilters: ["skills/**"]'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'executionMode: "update"'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'automerge: false'
+  assert_contains "$global" '^\\./skills/vendor-matt-pocock-skills\\.sh$'
 }
 
 test_renovate_regex_covers_extension_pins() {

@@ -46,6 +46,21 @@
         executionMode: "update",
       },
     },
+
+    // Refresh the vendored tree in the same PR that advances its upstream
+    // commit. Skill changes require human review because upstream can rename,
+    // remove, or substantially rewrite agent instructions.
+    {
+      matchDepNames: ["https://github.com/mattpocock/skills"],
+      groupName: "Matt Pocock skills",
+      groupSlug: "matt-pocock-skills",
+      automerge: false,
+      postUpgradeTasks: {
+        commands: ["./skills/vendor-matt-pocock-skills.sh"],
+        fileFilters: ["skills/**"],
+        executionMode: "update",
+      },
+    },
   ],
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`

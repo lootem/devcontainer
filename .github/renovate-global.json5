@@ -5,9 +5,10 @@
   repositories: ['lootem/devcontainer'],
   onboarding: false,
   requireConfig: 'optional',
-  // Permit only the fixed Kiro lock refresher. No shell metacharacters,
+  // Permit only the fixed generated-file refreshers. No shell metacharacters,
   // alternate dependencies, prereleases, or arbitrary executors are allowed.
   allowedCommands: [
     '^\\./install\\.sh dependency-lock kiro [0-9]+\\.[0-9]+\\.[0-9]+$',
+    '^\\./skills/vendor-matt-pocock-skills\\.sh$',
   ],
 }
