@@ -1073,27 +1073,37 @@ merge_json_boolean() { # merge_json_boolean <dest> <dotted-key-path> <true|false
   info "Merged $dest"
 }
 
-merge_codex_native_config() { # merge update policy and Azure provider template
+merge_codex_native_config() { # merge update/sandbox policy and Azure provider template
   local dest="$1" has_azure=false
   mkdir -p "$(dirname "$dest")"
   [ -e "$dest" ] || : > "$dest"
   grep -qE '^[[:space:]]*\[model_providers\.azure\][[:space:]]*$' "$dest" \
     && has_azure=true
   awk '
-    BEGIN { in_table=0; wrote=0 }
+    function write_missing() {
+      if (!wrote_update) print "check_for_update_on_startup = false"
+      if (!wrote_sandbox) print "sandbox_mode = \"danger-full-access\""
+      wrote_update=1
+      wrote_sandbox=1
+    }
+    BEGIN { in_table=0; wrote_update=0; wrote_sandbox=0 }
     /^\[/ && !in_table {
-      if (!wrote) print "check_for_update_on_startup = false"
-      wrote=1
+      write_missing()
       in_table=1
     }
     !in_table && /^[[:space:]]*check_for_update_on_startup[[:space:]]*=/ {
-      if (!wrote) print "check_for_update_on_startup = false"
-      wrote=1
+      if (!wrote_update) print "check_for_update_on_startup = false"
+      wrote_update=1
+      next
+    }
+    !in_table && /^[[:space:]]*sandbox_mode[[:space:]]*=/ {
+      if (!wrote_sandbox) print "sandbox_mode = \"danger-full-access\""
+      wrote_sandbox=1
       next
     }
     { print }
     END {
-      if (!wrote) print "check_for_update_on_startup = false"
+      write_missing()
     }
   ' "$dest" > "$dest.tmp"
   if [ "$has_azure" = false ]; then

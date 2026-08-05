@@ -715,6 +715,7 @@ test_cli_codex_only() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
   assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
   assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
+  assert_contains "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"'
   assert_contains "$d/.codex/config.toml" '[model_providers.azure]'
   assert_contains "$d/.codex/config.toml" 'env_key = "AZURE_OPENAI_API_KEY"'
   assert_contains "$d/.codex/config.toml" 'query_params = { api-version = "2025-04-01-preview" }'
@@ -936,7 +937,7 @@ test_native_config_merge_preserves_unrelated_keys() {
   local d; d="$(new_dir)"
   mkdir -p "$d/.claude" "$d/.codex" "$d/.opencode" "$d/.kiro/settings"
   printf '{"permissions":{"allow":["Bash(git status)"]}}\n' > "$d/.claude/settings.json"
-  printf 'model = "gpt-test"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
+  printf 'model = "gpt-test"\nsandbox_mode = "read-only"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
   printf '{"model":"anthropic/test"}\n' > "$d/.opencode/opencode.json"
   printf '{"chat":{"greeting":{"enabled":false}}}\n' > "$d/.kiro/settings/cli.json"
   run_install "$d" --cli claude,codex,opencode,kiro --language go --force
@@ -944,6 +945,13 @@ test_native_config_merge_preserves_unrelated_keys() {
   assert_json_has "$d/.claude/settings.json" '.permissions.allow[0] == "Bash(git status)"' "Claude config preserved"
   assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
   assert_count "$d/.codex/config.toml" 'check_for_update_on_startup = false' 1
+  assert_contains "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"'
+  assert_count "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"' 1
+  if grep -qF 'sandbox_mode = "read-only"' "$d/.codex/config.toml"; then
+    fail "Codex generated sandbox mode did not replace the existing value"
+  else
+    ok "Codex generated sandbox mode replaced the existing value"
+  fi
   assert_contains "$d/.codex/config.toml" 'model = "gpt-test"'
   assert_contains "$d/.codex/config.toml" '[history]'
   assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode auto-updates disabled"
