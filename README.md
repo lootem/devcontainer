@@ -99,6 +99,34 @@ command (`claude`, `codex`, `opencode`, or `kiro-cli`) and keep configuration, c
 and history in ignored workspace directories so they survive container rebuilds.
 OpenCode's native `/connect` credentials persist under `.opencode/data`.
 
+### Managing Docker disk usage
+
+Docker shares the generated image's layers with its pinned base image and with
+VS Code's UID-adjusted image, so the sizes shown by `docker images` are not
+additive. BuildKit stores package-download caches and intermediate layers
+separately; these speed up rebuilds but can accumulate as feature selections and
+versions change.
+
+Inspect actual usage and reclaimable build cache with:
+
+```bash
+docker system df -v
+docker buildx du
+```
+
+As a conservative retention policy, periodically remove builder cache that has
+not been used for seven days:
+
+```bash
+docker builder prune --filter 'until=168h'
+```
+
+The command previews the amount and asks for confirmation. Use `docker buildx
+prune --filter 'until=168h'` instead when builds use a named Buildx builder.
+Avoid `docker system prune --volumes` as routine maintenance: project volumes
+hold persistent editor and tool state and are intentionally outside the build
+cache.
+
 ## Bring your own backend
 
 Copy `.env.example` to the ignored `.env`, fill in the provider values you need,

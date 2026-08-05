@@ -258,6 +258,8 @@ test_fresh_scaffold() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG NODEJS=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'target=/home/vscode/go/pkg/mod,uid=1000,gid=1000,sharing=locked'
+  assert_contains "$d/.devcontainer/Dockerfile" 'target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked'
   assert_json_valid "$d/.vscode/settings.json"
   assert_json_valid "$d/.devcontainer/devcontainer.json"
   assert_contains "$d/.gitignore" 'node_modules'

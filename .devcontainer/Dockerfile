@@ -157,7 +157,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local;\
     fi
 USER vscode
-RUN if [ "$GOLANG" = "true" ]; then \
+RUN --mount=type=cache,target=/home/vscode/go/pkg/mod,uid=1000,gid=1000,sharing=locked \
+    --mount=type=cache,target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked \
+    if [ "$GOLANG" = "true" ]; then \
     /usr/local/go/bin/go install golang.org/x/tools/gopls@v${GOPLS_VER} && \
     /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@v${DLV_VER}; \
     fi
