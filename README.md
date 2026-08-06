@@ -136,13 +136,15 @@ The documented first-class families are Anthropic API, AWS Bedrock, Azure AI
 Foundry, OpenAI API, and Azure OpenAI.
 
 Run each selected CLI directly. Claude consumes the Anthropic, Bedrock, and
-Foundry variables natively. Codex consumes `OPENAI_API_KEY`; its generated
-`model_providers.azure` configuration uses `AZURE_OPENAI_API_KEY` after you
-replace the resource placeholder and select the Azure provider/model at the top
-level of `.codex/config.toml`; its endpoint and API version are native TOML
-settings rather than environment variables. OpenCode supports the documented
-variables and its broader provider catalog through native configuration and
-`/connect`.
+Foundry variables natively. Codex consumes `OPENAI_API_KEY`; its generated,
+commented `model_providers.azure` example uses `AZURE_OPENAI_API_KEY` after you
+uncomment it, replace the resource placeholder, and select the Azure
+provider/model at the top level of `.codex/config.toml`. A commented
+`amazon-bedrock` example selects Bedrock using its API key or the standard AWS
+credential chain. With both examples untouched, Codex uses the OpenAI provider
+with `gpt-5.6-sol` at medium reasoning effort. OpenCode
+supports the documented variables and its broader provider catalog through
+native configuration and `/connect`.
 
 Generated configuration disables CLI-managed updates while preserving unrelated
 settings. The pinned container image remains the update boundary: rerun the

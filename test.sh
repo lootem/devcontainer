@@ -258,8 +258,15 @@ test_fresh_scaffold() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG NODEJS=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
-  assert_contains "$d/.devcontainer/Dockerfile" 'target=/home/vscode/go/pkg/mod,uid=1000,gid=1000,sharing=locked'
-  assert_contains "$d/.devcontainer/Dockerfile" 'target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'target=/home/vscode/go/pkg,uid=1000,gid=1000,sharing=locked'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked'
+  if grep -qF 'target=/home/vscode/go/pkg/mod' "$d/.devcontainer/Dockerfile"; then
+    fail "generated Dockerfile mounts only GOMODCACHE and leaves sumdb under an unwritable parent"
+  else
+    ok "generated Dockerfile caches the shared writable Go pkg root"
+  fi
   assert_json_valid "$d/.vscode/settings.json"
   assert_json_valid "$d/.devcontainer/devcontainer.json"
   assert_contains "$d/.gitignore" 'node_modules'
@@ -718,9 +725,25 @@ test_cli_codex_only() {
   assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
   assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
   assert_contains "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"'
-  assert_contains "$d/.codex/config.toml" '[model_providers.azure]'
-  assert_contains "$d/.codex/config.toml" 'env_key = "AZURE_OPENAI_API_KEY"'
-  assert_contains "$d/.codex/config.toml" 'query_params = { api-version = "2025-04-01-preview" }'
+  assert_contains "$d/.codex/config.toml" 'model = "gpt-5.6-sol"'
+  assert_contains "$d/.codex/config.toml" 'model_reasoning_effort = "medium"'
+  assert_contains "$d/.codex/config.toml" '# [model_providers.azure]'
+  assert_contains "$d/.codex/config.toml" '# env_key = "AZURE_OPENAI_API_KEY"'
+  assert_contains "$d/.codex/config.toml" '# query_params = { api-version = "2025-04-01-preview" }'
+  assert_contains "$d/.codex/config.toml" '# model_provider = "amazon-bedrock"'
+  assert_contains "$d/.codex/config.toml" '# [model_providers.amazon-bedrock.aws]'
+  assert_contains "$d/.codex/config.toml" '# region = "us-east-2"'
+  if grep -qE '^[[:space:]]*\[model_providers\.azure\]' "$d/.codex/config.toml"; then
+    fail "Codex Azure provider example is active by default"
+  else
+    ok "Codex Azure provider example is commented out by default"
+  fi
+  if grep -qE '^[[:space:]]*(model_provider[[:space:]]*=|\[model_providers\.amazon-bedrock)' \
+    "$d/.codex/config.toml"; then
+    fail "Codex Bedrock provider example is active by default"
+  else
+    ok "Codex Bedrock provider example is commented out by default"
+  fi
 }
 
 test_cli_claude_only() {
@@ -955,6 +978,13 @@ test_native_config_merge_preserves_unrelated_keys() {
     ok "Codex generated sandbox mode replaced the existing value"
   fi
   assert_contains "$d/.codex/config.toml" 'model = "gpt-test"'
+  assert_count "$d/.codex/config.toml" 'model = "gpt-test"' 1
+  if grep -qF 'model = "gpt-5.6-sol"' "$d/.codex/config.toml"; then
+    fail "Codex generated model replaced an existing user model"
+  else
+    ok "Codex existing user model preserved"
+  fi
+  assert_contains "$d/.codex/config.toml" 'model_reasoning_effort = "medium"'
   assert_contains "$d/.codex/config.toml" '[history]'
   assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode auto-updates disabled"
   assert_json_has "$d/.opencode/opencode.json" '.model == "anthropic/test"' "OpenCode config preserved"

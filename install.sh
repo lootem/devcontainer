@@ -1073,20 +1073,32 @@ merge_json_boolean() { # merge_json_boolean <dest> <dotted-key-path> <true|false
   info "Merged $dest"
 }
 
-merge_codex_native_config() { # merge update/sandbox policy and Azure provider template
-  local dest="$1" has_azure=false
+merge_codex_native_config() { # merge policy and opt-in provider examples
+  local dest="$1" has_azure=false has_bedrock=false
   mkdir -p "$(dirname "$dest")"
   [ -e "$dest" ] || : > "$dest"
-  grep -qE '^[[:space:]]*\[model_providers\.azure\][[:space:]]*$' "$dest" \
+  grep -qE '^[[:space:]]*#?[[:space:]]*\[model_providers\.azure\][[:space:]]*$' "$dest" \
     && has_azure=true
+  grep -qE '^[[:space:]]*#?[[:space:]]*\[model_providers\.amazon-bedrock\.aws\][[:space:]]*$' "$dest" \
+    && has_bedrock=true
   awk '
     function write_missing() {
       if (!wrote_update) print "check_for_update_on_startup = false"
       if (!wrote_sandbox) print "sandbox_mode = \"danger-full-access\""
+      if (!wrote_model) print "model = \"gpt-5.6-sol\""
+      if (!wrote_effort) print "model_reasoning_effort = \"medium\""
       wrote_update=1
       wrote_sandbox=1
+      wrote_model=1
+      wrote_effort=1
     }
-    BEGIN { in_table=0; wrote_update=0; wrote_sandbox=0 }
+    BEGIN {
+      in_table=0
+      wrote_update=0
+      wrote_sandbox=0
+      wrote_model=0
+      wrote_effort=0
+    }
     /^\[/ && !in_table {
       write_missing()
       in_table=1
@@ -1101,6 +1113,16 @@ merge_codex_native_config() { # merge update/sandbox policy and Azure provider t
       wrote_sandbox=1
       next
     }
+    !in_table && /^[[:space:]]*model[[:space:]]*=/ {
+      wrote_model=1
+      print
+      next
+    }
+    !in_table && /^[[:space:]]*model_reasoning_effort[[:space:]]*=/ {
+      wrote_effort=1
+      print
+      next
+    }
     { print }
     END {
       write_missing()
@@ -1110,13 +1132,26 @@ merge_codex_native_config() { # merge update/sandbox policy and Azure provider t
     cat >> "$dest.tmp" <<'EOF'
 
 # Azure OpenAI provider. Replace YOUR_RESOURCE_NAME, then set the top-level
-# model_provider = "azure" and model = "<deployment-name>" to select it.
-[model_providers.azure]
-name = "Azure OpenAI"
-base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
-env_key = "AZURE_OPENAI_API_KEY"
-wire_api = "responses"
-query_params = { api-version = "2025-04-01-preview" }
+# model_provider = "azure" and model = "<deployment-name>" to select it, and
+# uncomment this entire provider table.
+# [model_providers.azure]
+# name = "Azure OpenAI"
+# base_url = "https://YOUR_RESOURCE_NAME.openai.azure.com/openai"
+# env_key = "AZURE_OPENAI_API_KEY"
+# wire_api = "responses"
+# query_params = { api-version = "2025-04-01-preview" }
+EOF
+  fi
+  if [ "$has_bedrock" = false ]; then
+    cat >> "$dest.tmp" <<'EOF'
+
+# Amazon Bedrock provider. Uncomment model_provider and optionally model, then
+# configure either AWS_BEARER_TOKEN_BEDROCK or the standard AWS credential chain.
+# model_provider = "amazon-bedrock"
+# model = "openai.gpt-5.6-sol"
+# [model_providers.amazon-bedrock.aws]
+# region = "us-east-2"
+# profile = "codex-bedrock"
 EOF
   fi
   mv "$dest.tmp" "$dest"
