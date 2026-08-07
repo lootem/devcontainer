@@ -258,6 +258,17 @@ test_fresh_scaffold() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG NODEJS=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'install -d -o vscode -g vscode /home/vscode/go /home/vscode/go/bin'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'target=/home/vscode/go/pkg,uid=1000,gid=1000,sharing=locked'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked'
+  if grep -qF 'target=/home/vscode/go/pkg/mod' "$d/.devcontainer/Dockerfile"; then
+    fail "generated Dockerfile mounts only GOMODCACHE and leaves sumdb under an unwritable parent"
+  else
+    ok "generated Dockerfile caches the shared writable Go pkg root"
+  fi
   assert_json_valid "$d/.vscode/settings.json"
   assert_json_valid "$d/.devcontainer/devcontainer.json"
   assert_contains "$d/.gitignore" 'node_modules'
@@ -715,9 +726,26 @@ test_cli_codex_only() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG CLAUDECODE=false'
   assert_contains "$d/.devcontainer/docker-compose.yml" 'CODEX_HOME: /app/.codex'
   assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
-  assert_contains "$d/.codex/config.toml" '[model_providers.azure]'
-  assert_contains "$d/.codex/config.toml" 'env_key = "AZURE_OPENAI_API_KEY"'
-  assert_contains "$d/.codex/config.toml" 'query_params = { api-version = "2025-04-01-preview" }'
+  assert_contains "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"'
+  assert_contains "$d/.codex/config.toml" 'model = "gpt-5.6-sol"'
+  assert_contains "$d/.codex/config.toml" 'model_reasoning_effort = "medium"'
+  assert_contains "$d/.codex/config.toml" '# [model_providers.azure]'
+  assert_contains "$d/.codex/config.toml" '# env_key = "AZURE_OPENAI_API_KEY"'
+  assert_contains "$d/.codex/config.toml" '# query_params = { api-version = "2025-04-01-preview" }'
+  assert_contains "$d/.codex/config.toml" '# model_provider = "amazon-bedrock"'
+  assert_contains "$d/.codex/config.toml" '# [model_providers.amazon-bedrock.aws]'
+  assert_contains "$d/.codex/config.toml" '# region = "us-east-2"'
+  if grep -qE '^[[:space:]]*\[model_providers\.azure\]' "$d/.codex/config.toml"; then
+    fail "Codex Azure provider example is active by default"
+  else
+    ok "Codex Azure provider example is commented out by default"
+  fi
+  if grep -qE '^[[:space:]]*(model_provider[[:space:]]*=|\[model_providers\.amazon-bedrock)' \
+    "$d/.codex/config.toml"; then
+    fail "Codex Bedrock provider example is active by default"
+  else
+    ok "Codex Bedrock provider example is commented out by default"
+  fi
 }
 
 test_cli_claude_only() {
@@ -886,7 +914,13 @@ test_kiro_renovate_contract() {
   assert_contains "$renovate" 'commit.message'
   assert_contains "$renovate" 'commit.committer.date'
   assert_contains "$renovate" './install.sh dependency-lock kiro {{{newValue}}}'
-  assert_contains "$renovate" 'automerge: false'
+  local kiro_rule
+  kiro_rule="$(awk '
+    index($0, "matchDepNames: [\"kiro-cli\"]") { found=1 }
+    found { print }
+    found && /^    },$/ { exit }
+  ' "$renovate")"
+  assert_contains <(printf '%s\n' "$kiro_rule") 'automerge: true'
   assert_contains "$global" 'allowedCommands'
   assert_contains "$global" '^\\./install\\.sh dependency-lock kiro [0-9]+\\.[0-9]+\\.[0-9]+$'
 }
@@ -936,7 +970,7 @@ test_native_config_merge_preserves_unrelated_keys() {
   local d; d="$(new_dir)"
   mkdir -p "$d/.claude" "$d/.codex" "$d/.opencode" "$d/.kiro/settings"
   printf '{"permissions":{"allow":["Bash(git status)"]}}\n' > "$d/.claude/settings.json"
-  printf 'model = "gpt-test"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
+  printf 'model = "gpt-test"\nsandbox_mode = "read-only"\n[history]\npersistence = "none"\n' > "$d/.codex/config.toml"
   printf '{"model":"anthropic/test"}\n' > "$d/.opencode/opencode.json"
   printf '{"chat":{"greeting":{"enabled":false}}}\n' > "$d/.kiro/settings/cli.json"
   run_install "$d" --cli claude,codex,opencode,kiro --language go --force
@@ -944,7 +978,21 @@ test_native_config_merge_preserves_unrelated_keys() {
   assert_json_has "$d/.claude/settings.json" '.permissions.allow[0] == "Bash(git status)"' "Claude config preserved"
   assert_contains "$d/.codex/config.toml" 'check_for_update_on_startup = false'
   assert_count "$d/.codex/config.toml" 'check_for_update_on_startup = false' 1
+  assert_contains "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"'
+  assert_count "$d/.codex/config.toml" 'sandbox_mode = "danger-full-access"' 1
+  if grep -qF 'sandbox_mode = "read-only"' "$d/.codex/config.toml"; then
+    fail "Codex generated sandbox mode did not replace the existing value"
+  else
+    ok "Codex generated sandbox mode replaced the existing value"
+  fi
   assert_contains "$d/.codex/config.toml" 'model = "gpt-test"'
+  assert_count "$d/.codex/config.toml" 'model = "gpt-test"' 1
+  if grep -qF 'model = "gpt-5.6-sol"' "$d/.codex/config.toml"; then
+    fail "Codex generated model replaced an existing user model"
+  else
+    ok "Codex existing user model preserved"
+  fi
+  assert_contains "$d/.codex/config.toml" 'model_reasoning_effort = "medium"'
   assert_contains "$d/.codex/config.toml" '[history]'
   assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode auto-updates disabled"
   assert_json_has "$d/.opencode/opencode.json" '.model == "anthropic/test"' "OpenCode config preserved"
@@ -1090,7 +1138,7 @@ test_renovate_regex_covers_vendor_script_pin() {
   assert_contains <(printf '%s\n' "$vendor_rule") 'commands: ["./skills/vendor-matt-pocock-skills.sh"]'
   assert_contains <(printf '%s\n' "$vendor_rule") 'fileFilters: ["skills/**"]'
   assert_contains <(printf '%s\n' "$vendor_rule") 'executionMode: "update"'
-  assert_contains <(printf '%s\n' "$vendor_rule") 'automerge: false'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'automerge: true'
   assert_contains "$global" '^\\./skills/vendor-matt-pocock-skills\\.sh$'
 }
 
