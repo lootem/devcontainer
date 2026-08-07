@@ -24,7 +24,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.9
+ARG OPENCODE_VER=1.18.10
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
@@ -193,7 +193,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.17.0
+ARG PNPM_VER=11.18.0
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
@@ -291,7 +291,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.36.10
+ARG AWS_VER=2.36.13
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
@@ -316,7 +316,7 @@ RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
 # -- GitHub CLI
 ARG GHCLI=false
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.*)$
-ARG GH_VER=2.96.0
+ARG GH_VER=2.97.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$GHCLI" = "true" ]; then \
