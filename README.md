@@ -171,7 +171,8 @@ Kiro is a multi-artifact exception to ordinary single-pin updates. Renovate
 dates releases from exact `kiro-cli <semver>` Homebrew cask commits, then runs
 the narrowly allowlisted command below only after the age gate passes. The
 command downloads both official Linux artifacts and atomically replaces both
-hash records; Kiro updates never automerge.
+hash records. Kiro updates automerge after the same age and build gates as
+other non-major dependency updates.
 
 ```bash
 ./install.sh dependency-lock kiro <version>

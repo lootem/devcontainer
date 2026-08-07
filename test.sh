@@ -259,6 +259,8 @@ test_fresh_scaffold() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG NODEJS=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
   assert_contains "$d/.devcontainer/Dockerfile" \
+    'install -d -o vscode -g vscode /home/vscode/go /home/vscode/go/bin'
+  assert_contains "$d/.devcontainer/Dockerfile" \
     'target=/home/vscode/go/pkg,uid=1000,gid=1000,sharing=locked'
   assert_contains "$d/.devcontainer/Dockerfile" \
     'target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked'
@@ -912,7 +914,13 @@ test_kiro_renovate_contract() {
   assert_contains "$renovate" 'commit.message'
   assert_contains "$renovate" 'commit.committer.date'
   assert_contains "$renovate" './install.sh dependency-lock kiro {{{newValue}}}'
-  assert_contains "$renovate" 'automerge: false'
+  local kiro_rule
+  kiro_rule="$(awk '
+    index($0, "matchDepNames: [\"kiro-cli\"]") { found=1 }
+    found { print }
+    found && /^    },$/ { exit }
+  ' "$renovate")"
+  assert_contains <(printf '%s\n' "$kiro_rule") 'automerge: true'
   assert_contains "$global" 'allowedCommands'
   assert_contains "$global" '^\\./install\\.sh dependency-lock kiro [0-9]+\\.[0-9]+\\.[0-9]+$'
 }
@@ -1130,7 +1138,7 @@ test_renovate_regex_covers_vendor_script_pin() {
   assert_contains <(printf '%s\n' "$vendor_rule") 'commands: ["./skills/vendor-matt-pocock-skills.sh"]'
   assert_contains <(printf '%s\n' "$vendor_rule") 'fileFilters: ["skills/**"]'
   assert_contains <(printf '%s\n' "$vendor_rule") 'executionMode: "update"'
-  assert_contains <(printf '%s\n' "$vendor_rule") 'automerge: false'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'automerge: true'
   assert_contains "$global" '^\\./skills/vendor-matt-pocock-skills\\.sh$'
 }
 
