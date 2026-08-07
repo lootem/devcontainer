@@ -99,6 +99,34 @@ command (`claude`, `codex`, `opencode`, or `kiro-cli`) and keep configuration, c
 and history in ignored workspace directories so they survive container rebuilds.
 OpenCode's native `/connect` credentials persist under `.opencode/data`.
 
+### Managing Docker disk usage
+
+Docker shares the generated image's layers with its pinned base image and with
+VS Code's UID-adjusted image, so the sizes shown by `docker images` are not
+additive. BuildKit stores package-download caches and intermediate layers
+separately; these speed up rebuilds but can accumulate as feature selections and
+versions change.
+
+Inspect actual usage and reclaimable build cache with:
+
+```bash
+docker system df -v
+docker buildx du
+```
+
+As a conservative retention policy, periodically remove builder cache that has
+not been used for seven days:
+
+```bash
+docker builder prune --filter 'until=168h'
+```
+
+The command previews the amount and asks for confirmation. Use `docker buildx
+prune --filter 'until=168h'` instead when builds use a named Buildx builder.
+Avoid `docker system prune --volumes` as routine maintenance: project volumes
+hold persistent editor and tool state and are intentionally outside the build
+cache.
+
 ## Bring your own backend
 
 Copy `.env.example` to the ignored `.env`, fill in the provider values you need,
@@ -108,13 +136,15 @@ The documented first-class families are Anthropic API, AWS Bedrock, Azure AI
 Foundry, OpenAI API, and Azure OpenAI.
 
 Run each selected CLI directly. Claude consumes the Anthropic, Bedrock, and
-Foundry variables natively. Codex consumes `OPENAI_API_KEY`; its generated
-`model_providers.azure` configuration uses `AZURE_OPENAI_API_KEY` after you
-replace the resource placeholder and select the Azure provider/model at the top
-level of `.codex/config.toml`; its endpoint and API version are native TOML
-settings rather than environment variables. OpenCode supports the documented
-variables and its broader provider catalog through native configuration and
-`/connect`.
+Foundry variables natively. Codex consumes `OPENAI_API_KEY`; its generated,
+commented `model_providers.azure` example uses `AZURE_OPENAI_API_KEY` after you
+uncomment it, replace the resource placeholder, and select the Azure
+provider/model at the top level of `.codex/config.toml`. A commented
+`amazon-bedrock` example selects Bedrock using its API key or the standard AWS
+credential chain. With both examples untouched, Codex uses the OpenAI provider
+with `gpt-5.6-sol` at medium reasoning effort. OpenCode
+supports the documented variables and its broader provider catalog through
+native configuration and `/connect`.
 
 Generated configuration disables CLI-managed updates while preserving unrelated
 settings. The pinned container image remains the update boundary: rerun the
@@ -141,7 +171,8 @@ Kiro is a multi-artifact exception to ordinary single-pin updates. Renovate
 dates releases from exact `kiro-cli <semver>` Homebrew cask commits, then runs
 the narrowly allowlisted command below only after the age gate passes. The
 command downloads both official Linux artifacts and atomically replaces both
-hash records; Kiro updates never automerge.
+hash records. Kiro updates automerge after the same age and build gates as
+other non-major dependency updates.
 
 ```bash
 ./install.sh dependency-lock kiro <version>

@@ -24,14 +24,14 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.9
+ARG OPENCODE_VER=1.18.10
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
     case "$ARCH" in \
-      amd64) NPM_PKG="opencode-linux-x64" ;; \
-      arm64) NPM_PKG="opencode-linux-arm64" ;; \
-      *) echo "Unsupported OpenCode architecture: $ARCH" >&2; exit 1 ;; \
+    amd64) NPM_PKG="opencode-linux-x64" ;; \
+    arm64) NPM_PKG="opencode-linux-arm64" ;; \
+    *) echo "Unsupported OpenCode architecture: $ARCH" >&2; exit 1 ;; \
     esac && \
     META="/tmp/opencode-meta.json" && \
     PKG="/tmp/${NPM_PKG}-${OPENCODE_VER}.tgz" && \
@@ -45,7 +45,7 @@ RUN if [ "$OPENCODE" = "true" ]; then \
     [ -n "$EXPECTED_B64" ] && \
     curl -fsSL "$TARBALL" -o "$PKG" && \
     EXPECTED_HEX="$(printf '%s' "$EXPECTED_B64" | base64 -d \
-      | od -An -tx1 | tr -d '[:space:]')" && \
+    | od -An -tx1 | tr -d '[:space:]')" && \
     printf '%s  %s\n' "$EXPECTED_HEX" "$PKG" | sha512sum -c - && \
     tar -xzf "$PKG" -C /usr/local/bin --strip-components=2 package/bin/opencode && \
     chmod 0755 /usr/local/bin/opencode && \
@@ -74,9 +74,9 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
     [ "$AMD64_URL" = "https://desktop-release.q.us-east-1.amazonaws.com/${VERSION}/kirocli-x86_64-linux.tar.xz" ] && \
     [ "$ARM64_URL" = "https://desktop-release.q.us-east-1.amazonaws.com/${VERSION}/kirocli-aarch64-linux.tar.xz" ] && \
     case "$ARCH" in \
-      amd64) EXPECTED_FILE="kirocli-x86_64-linux.tar.xz"; URL="$AMD64_URL"; SHA256="$AMD64_SHA256" ;; \
-      arm64) EXPECTED_FILE="kirocli-aarch64-linux.tar.xz"; URL="$ARM64_URL"; SHA256="$ARM64_SHA256" ;; \
-      *) echo "Unsupported Kiro architecture: $ARCH" >&2; exit 1 ;; \
+    amd64) EXPECTED_FILE="kirocli-x86_64-linux.tar.xz"; URL="$AMD64_URL"; SHA256="$AMD64_SHA256" ;; \
+    arm64) EXPECTED_FILE="kirocli-aarch64-linux.tar.xz"; URL="$ARM64_URL"; SHA256="$ARM64_SHA256" ;; \
+    *) echo "Unsupported Kiro architecture: $ARCH" >&2; exit 1 ;; \
     esac && \
     ARCHIVE="/tmp/$EXPECTED_FILE" && \
     EXTRACT="/tmp/kiro-extract" && \
@@ -154,10 +154,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends build-essential make mingw-w64 && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local;\
+    curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local && \
+    install -d -o vscode -g vscode /home/vscode/go /home/vscode/go/bin; \
     fi
 USER vscode
-RUN if [ "$GOLANG" = "true" ]; then \
+RUN --mount=type=cache,target=/home/vscode/go/pkg,uid=1000,gid=1000,sharing=locked \
+    --mount=type=cache,target=/home/vscode/.cache/go-build,uid=1000,gid=1000,sharing=locked \
+    if [ "$GOLANG" = "true" ]; then \
     /usr/local/go/bin/go install golang.org/x/tools/gopls@v${GOPLS_VER} && \
     /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@v${DLV_VER}; \
     fi
@@ -190,7 +193,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.17.0
+ARG PNPM_VER=11.18.0
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
@@ -288,7 +291,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.36.10
+ARG AWS_VER=2.36.13
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
@@ -313,7 +316,7 @@ RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
 # -- GitHub CLI
 ARG GHCLI=false
 # renovate: datasource=github-releases depName=cli/cli extractVersion=^v(?<version>.*)$
-ARG GH_VER=2.96.0
+ARG GH_VER=2.97.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$GHCLI" = "true" ]; then \

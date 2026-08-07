@@ -39,7 +39,7 @@
       matchDepNames: ["kiro-cli"],
       groupName: "Kiro CLI (amd64 and arm64)",
       groupSlug: "kiro-cli",
-      automerge: false,
+      automerge: true,
       postUpgradeTasks: {
         commands: ["./install.sh dependency-lock kiro {{{newValue}}}"],
         fileFilters: [".devcontainer/dependencies.lock.json"],
@@ -48,13 +48,12 @@
     },
 
     // Refresh the vendored tree in the same PR that advances its upstream
-    // commit. Skill changes require human review because upstream can rename,
-    // remove, or substantially rewrite agent instructions.
+    // commit. Automerge after the release-age gate and required checks pass.
     {
       matchDepNames: ["https://github.com/mattpocock/skills"],
       groupName: "Matt Pocock skills",
       groupSlug: "matt-pocock-skills",
-      automerge: false,
+      automerge: true,
       postUpgradeTasks: {
         commands: ["./skills/vendor-matt-pocock-skills.sh"],
         fileFilters: ["skills/**"],
@@ -100,10 +99,8 @@
     {
       // skills/vendor-matt-pocock-skills.sh pins a third-party commit SHA
       // (not a tag/branch) as its default --ref. Tracked as a git-refs digest
-      // against upstream's default branch so Renovate can propose bumps —
-      // still gated by minimumReleaseAge above, and still a maintainer
-      // decision to actually apply (see the script's header comment: the
-      // upstream repo has renamed/merged skills before).
+      // against upstream's default branch so Renovate can propose bumps,
+      // still gated by minimumReleaseAge above and required checks.
       customType: 'regex',
       managerFilePatterns: ['/^skills/vendor-matt-pocock-skills\\.sh$/'],
       matchStrings: [

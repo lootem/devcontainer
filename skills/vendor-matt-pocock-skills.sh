@@ -17,7 +17,8 @@
 # The default --ref is pinned to the exact commit these skills were last
 # vendored from — NOT upstream's latest — because upstream renamed/merged
 # skills on 2026-07-02 (to-prd -> to-spec, to-issues merged into to-tickets).
-# Bumping --ref is a deliberate, reviewed decision, not a routine update.
+# Renovate bumps --ref and refreshes the vendored tree in a PR after its
+# release-age gate; required checks must pass before that PR automerges.
 #
 #   skills/vendor-matt-pocock-skills.sh
 #   skills/vendor-matt-pocock-skills.sh --ref <sha>
@@ -53,8 +54,6 @@ copy, gitignored) is left alone and may drift until you next run
 "install.sh --skills".
 
       --ref <sha>          Commit to vendor from (default: pinned $REF).
-                            Bumping this is a deliberate decision — upstream
-                            has renamed/merged skills before.
       --repo <owner/repo>  Upstream repo (default: $REPO).
   -h, --help               Show this help.
 EOF
