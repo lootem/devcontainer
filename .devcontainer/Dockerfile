@@ -29,9 +29,9 @@ ARG OPENCODE_VER=1.18.9
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
     case "$ARCH" in \
-      amd64) NPM_PKG="opencode-linux-x64" ;; \
-      arm64) NPM_PKG="opencode-linux-arm64" ;; \
-      *) echo "Unsupported OpenCode architecture: $ARCH" >&2; exit 1 ;; \
+    amd64) NPM_PKG="opencode-linux-x64" ;; \
+    arm64) NPM_PKG="opencode-linux-arm64" ;; \
+    *) echo "Unsupported OpenCode architecture: $ARCH" >&2; exit 1 ;; \
     esac && \
     META="/tmp/opencode-meta.json" && \
     PKG="/tmp/${NPM_PKG}-${OPENCODE_VER}.tgz" && \
@@ -45,7 +45,7 @@ RUN if [ "$OPENCODE" = "true" ]; then \
     [ -n "$EXPECTED_B64" ] && \
     curl -fsSL "$TARBALL" -o "$PKG" && \
     EXPECTED_HEX="$(printf '%s' "$EXPECTED_B64" | base64 -d \
-      | od -An -tx1 | tr -d '[:space:]')" && \
+    | od -An -tx1 | tr -d '[:space:]')" && \
     printf '%s  %s\n' "$EXPECTED_HEX" "$PKG" | sha512sum -c - && \
     tar -xzf "$PKG" -C /usr/local/bin --strip-components=2 package/bin/opencode && \
     chmod 0755 /usr/local/bin/opencode && \
@@ -74,9 +74,9 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
     [ "$AMD64_URL" = "https://desktop-release.q.us-east-1.amazonaws.com/${VERSION}/kirocli-x86_64-linux.tar.xz" ] && \
     [ "$ARM64_URL" = "https://desktop-release.q.us-east-1.amazonaws.com/${VERSION}/kirocli-aarch64-linux.tar.xz" ] && \
     case "$ARCH" in \
-      amd64) EXPECTED_FILE="kirocli-x86_64-linux.tar.xz"; URL="$AMD64_URL"; SHA256="$AMD64_SHA256" ;; \
-      arm64) EXPECTED_FILE="kirocli-aarch64-linux.tar.xz"; URL="$ARM64_URL"; SHA256="$ARM64_SHA256" ;; \
-      *) echo "Unsupported Kiro architecture: $ARCH" >&2; exit 1 ;; \
+    amd64) EXPECTED_FILE="kirocli-x86_64-linux.tar.xz"; URL="$AMD64_URL"; SHA256="$AMD64_SHA256" ;; \
+    arm64) EXPECTED_FILE="kirocli-aarch64-linux.tar.xz"; URL="$ARM64_URL"; SHA256="$ARM64_SHA256" ;; \
+    *) echo "Unsupported Kiro architecture: $ARCH" >&2; exit 1 ;; \
     esac && \
     ARCHIVE="/tmp/$EXPECTED_FILE" && \
     EXTRACT="/tmp/kiro-extract" && \
@@ -154,7 +154,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends build-essential make mingw-w64 && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local;\
+    curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-$(dpkg --print-architecture).tar.gz" | tar -xz -C /usr/local && \
+    install -d -o vscode -g vscode /home/vscode/go /home/vscode/go/bin; \
     fi
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/go/pkg,uid=1000,gid=1000,sharing=locked \
