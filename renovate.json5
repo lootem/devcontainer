@@ -63,7 +63,7 @@
   ],
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`
-  // comments. The base-image digest is bumped by base-image-digest.yml
+  // comments. Pinned image digests are bumped by base-image-digest.yml
   // instead (the docker datasource can't reliably date a rolling tag).
   customManagers: [
     {
@@ -73,7 +73,7 @@
       customType: 'regex',
       managerFilePatterns: ['/^\\.devcontainer/Dockerfile$/'],
       matchStrings: [
-        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER|CODEX_VER|OPENCODE_VER|DLV_VER)=(?<currentValue>\\S+)',
+        '# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?(?: registryUrl=(?<registryUrl>\\S+))?\\s+ARG (?:GO_VER|GOPLS_VER|POETRY_VER|NODE_VER|BUN_VER|PNPM_VER|DOTNET_VER|AZ_VER|PWSH_VER|AZPWSH_VER|AWS_VER|GH_VER|CLAUDE_VER|CODEX_VER|OPENCODE_VER|DLV_VER|GRAPHIFYY_VER)=(?<currentValue>\\S+)',
       ],
     },
     {
