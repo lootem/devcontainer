@@ -8,9 +8,8 @@
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-vscode-remote.vscode-remote-extensionpack",
-                "ms-vscode.remote-explorer",
-                "ms-azuretools.vscode-containers@2.4.5"
+                "ms-azuretools.vscode-containers@2.4.5",
+                "GitHub.vscode-github-actions@0.32.3"
             ],
             "settings": {
                 "extensions.autoCheckUpdates": false,
