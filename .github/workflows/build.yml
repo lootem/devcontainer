@@ -93,5 +93,6 @@ jobs:
             POWERSHELL=true
             AZPWSH=true
             AWSCLI=true
+            GRAPHIFYY=true
           cache-from: type=gha,scope=build-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=build-${{ matrix.arch }}
