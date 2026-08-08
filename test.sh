@@ -206,6 +206,10 @@ assert_file_exists() { # assert_file_exists <path>
   [ -f "$1" ] && ok "$1 exists" || fail "$1 missing"
 }
 
+assert_dir_exists() { # assert_dir_exists <path>
+  [ -d "$1" ] && ok "$1 exists" || fail "$1 missing"
+}
+
 assert_file_not_exists() { # assert_file_not_exists <path>
   [ -f "$1" ] && fail "$1 exists (should not)" || ok "$1 absent"
 }
@@ -318,12 +322,15 @@ test_dotnet_scaffold() {
 
 test_tool_scaffold() {
   local d; d="$(new_dir)"
-  run_install "$d" --language go --tool awscli,azpwsh --force
+  run_install "$d" --language go --tool awscli,azpwsh,graphify --force
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AWSCLI=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AZPWSH=true'
+  assert_contains "$d/.devcontainer/Dockerfile" 'ARG GRAPHIFYY=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AZCLI=false'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG POWERSHELL=false'
+  assert_contains "$d/.devcontainer/Dockerfile" 'from=uv,source=/uv,target=/tmp/uv,readonly'
+  assert_contains "$d/.devcontainer/Dockerfile" '/tmp/uv cache clean'
 }
 
 test_tool_unknown_rejected() {
@@ -515,6 +522,8 @@ test_unified_installer_surgical_bumps_and_preserves_edits() {
   cp "$REPO_ROOT/.devcontainer/devcontainer.json" "$up/.devcontainer/devcontainer.json"
   cp "$REPO_ROOT/templates/go/extensions.json" "$up/templates/go/extensions.json"
   sed -i -E 's/ARG CLAUDE_VER=[0-9.]+/ARG CLAUDE_VER=9.9.999/' "$up/.devcontainer/Dockerfile"
+  sed -i -E 's|ghcr.io/astral-sh/uv:[^@]+@sha256:[0-9a-f]+|ghcr.io/astral-sh/uv:9.9.999-python3.13-dhi@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|' "$up/.devcontainer/Dockerfile"
+  sed -i -E 's|mcr.microsoft.com/devcontainers/base:trixie@sha256:[0-9a-f]+|mcr.microsoft.com/devcontainers/base:trixie@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|' "$up/.devcontainer/Dockerfile"
   sed -i -E 's/ms-azuretools\.vscode-containers@[0-9.]+/ms-azuretools.vscode-containers@9.9.9/' "$up/.devcontainer/devcontainer.json"
   sed -i -E 's/golang\.go@[0-9.]+/golang.go@9.9.9/' "$up/templates/go/extensions.json"
 
@@ -533,6 +542,10 @@ test_unified_installer_surgical_bumps_and_preserves_edits() {
   assert_contains "$d/.devcontainer/devcontainer.json" 'golang.go@9.9.9'
   assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local comment'
   assert_contains "$d/.devcontainer/Dockerfile" '# hand-added local line'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'ghcr.io/astral-sh/uv:9.9.999-python3.13-dhi@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  assert_contains "$d/.devcontainer/Dockerfile" \
+    'mcr.microsoft.com/devcontainers/base:trixie@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GOLANG=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG PYTHON=false'
 }
@@ -784,6 +797,7 @@ test_cli_opencode_only() {
   assert_contains "$d/.devcontainer/Dockerfile" 'package/bin/opencode'
   assert_contains "$d/.devcontainer/docker-compose.yml" 'OPENCODE_CONFIG_DIR: /app/.opencode'
   assert_contains "$d/.devcontainer/docker-compose.yml" '../.opencode/data:/home/vscode/.local/share/opencode'
+  assert_dir_exists "$d/.opencode/data"
   assert_json_has "$d/.opencode/opencode.json" '.autoupdate == false' "OpenCode native updates disabled"
 }
 
@@ -1104,6 +1118,16 @@ test_renovate_regex_covers_pins() {
   else
     fail "GO_VER is not a plain Renovate-covered ARG in renovate.json5"
   fi
+}
+
+test_image_digest_workflow_covers_uv() {
+  local wf="$REPO_ROOT/.github/workflows/base-image-digest.yml"
+  assert_contains "$wf" 'UV_IMAGE=$(sed'
+  assert_contains "$wf" 'resolve_image uv "$UV_IMAGE"'
+  assert_contains "$wf" 'steps.resolve.outputs.uv_age_days'
+  assert_contains "$wf" 'bump_if_aged "${{ steps.resolve.outputs.uv_image }}"'
+  assert_contains "$REPO_ROOT/.devcontainer/Dockerfile" \
+    'FROM ghcr.io/astral-sh/uv:0.12.3-python3.13-dhi@sha256:'
 }
 
 test_renovate_regex_covers_vendor_script_pin() {
@@ -1469,6 +1493,7 @@ TESTS=(
   test_unified_installer_failed_migration_is_atomic
   test_shellcheck
   test_renovate_regex_covers_pins
+  test_image_digest_workflow_covers_uv
   test_renovate_regex_covers_vendor_script_pin
   test_renovate_regex_covers_extension_pins
   test_token_set_matches_dockerfile_args

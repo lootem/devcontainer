@@ -40,7 +40,7 @@ Usage: install.sh update [--full] [--repo <owner/repo>] [--ref <ref>] [-- <extra
 
 Default (surgical): fetches upstream's .devcontainer/Dockerfile +
 devcontainer.json (parse-only) and bumps in place every pinned version this
-repo already tracks — Renovate-annotated ARGs, the base image @sha256: digest,
+repo already tracks — Renovate-annotated ARGs, pinned image @sha256: digests,
 devcontainer.json extension @version pins, and signing keys/fingerprints
 (awscli.pub, MS_KEY_FP*, inline EXPECTED= fingerprints) — for keys present
 both locally and upstream. Everything else (toggle ARGs, comments, local
@@ -194,30 +194,26 @@ transplant_dockerfile_pins() { # transplant_dockerfile_pins <local> <upstream>
   mv "$tmp" "$local_df"
 }
 
-# The base image digest isn't `# renovate:`-annotated (a separate workflow
-# tracks it, since the docker datasource can't date a rolling tag) — handle it
-# as its own single-line transplant, matched by image name.
-transplant_base_digest() { # transplant_base_digest <local> <upstream>
-  local local_df="$1" upstream_df="$2"
-  local limage ldigest uimage udigest
-  limage="$(sed -n -E 's/^FROM ([^@[:space:]]+)@sha256:[0-9a-f]+.*$/\1/p' "$local_df" | head -1)"
-  ldigest="$(sed -n -E 's/^FROM [^@[:space:]]+@(sha256:[0-9a-f]+).*$/\1/p' "$local_df" | head -1)"
-  uimage="$(sed -n -E 's/^FROM ([^@[:space:]]+)@sha256:[0-9a-f]+.*$/\1/p' "$upstream_df" | head -1)"
-  udigest="$(sed -n -E 's/^FROM [^@[:space:]]+@(sha256:[0-9a-f]+).*$/\1/p' "$upstream_df" | head -1)"
-
-  if [ -z "$ldigest" ] || [ -z "$udigest" ] || [ "$limage" != "$uimage" ]; then
-    SKIPPED_LOCAL_ONLY+=("base image digest (no matching FROM upstream)")
-    return
-  fi
-  [ "$ldigest" = "$udigest" ] && return
-
-  # Scoped to the FROM line only (not a file-wide replace) — a digest string
-  # is effectively unique, but there's no reason to risk a stray match.
-  awk -v old="@${ldigest}" -v new="@${udigest}" '
-    /^FROM / { sub(old, new) }
-    { print }
-  ' "$local_df" > "$local_df.tmp" && mv "$local_df.tmp" "$local_df"
-  BUMPED+=("base image digest: $ldigest -> $udigest")
+# Pinned FROM images aren't `# renovate:`-annotated. Transplant every image
+# that exists on both sides, matching by repository so versioned helper stages
+# (such as uv) receive both tag and digest updates.
+transplant_image_pins() { # transplant_image_pins <local> <upstream>
+  local local_df="$1" upstream_df="$2" repository local_pin upstream_pin
+  while IFS= read -r repository; do
+    [ -z "$repository" ] && continue
+    local_pin="$(sed -n -E "s|^FROM (${repository}:[^[:space:]]+@sha256:[0-9a-f]+).*$|\1|p" "$local_df" | head -1)"
+    upstream_pin="$(sed -n -E "s|^FROM (${repository}:[^[:space:]]+@sha256:[0-9a-f]+).*$|\1|p" "$upstream_df" | head -1)"
+    if [ -z "$upstream_pin" ]; then
+      SKIPPED_LOCAL_ONLY+=("image $repository (no matching FROM upstream)")
+      continue
+    fi
+    [ "$local_pin" = "$upstream_pin" ] && continue
+    awk -v repo="$repository" -v replacement="$upstream_pin" '
+      $1 == "FROM" && index($2, repo ":") == 1 { $2 = replacement }
+      { print }
+    ' "$local_df" > "$local_df.tmp" && mv "$local_df.tmp" "$local_df"
+    BUMPED+=("image $repository: $local_pin -> $upstream_pin")
+  done < <(sed -n -E 's|^FROM (([^/@[:space:]]+/)+[^/@:[:space:]]+):[^@[:space:]]+@sha256:[0-9a-f]+.*$|\1|p' "$local_df")
 }
 
 # Byte-for-byte replace $1 (mutated in place) with $2 if they differ. Used for
@@ -420,7 +416,7 @@ run_surgical() {
   SKIPPED_LOCAL_ONLY=()
 
   transplant_dockerfile_pins "$candidate_dockerfile" "$up_dockerfile"
-  transplant_base_digest "$candidate_dockerfile" "$up_dockerfile"
+  transplant_image_pins "$candidate_dockerfile" "$up_dockerfile"
   transplant_devcontainer_json_pins "$candidate_devcontainer" "$upstream_ext_pins"
   transplant_named_arg "$candidate_dockerfile" "$up_dockerfile" "MS_KEY_FP"
   transplant_named_arg "$candidate_dockerfile" "$up_dockerfile" "MS_KEY_FP_2025"
@@ -491,6 +487,7 @@ arg_token() {
     GHCLI)      echo "gh" ;;
     POWERSHELL) echo "pwsh" ;;
     AZPWSH)     echo "azpwsh" ;;
+    GRAPHIFYY)  echo "graphify" ;;
     CLAUDECODE) echo "claude" ;;
     CODEX)      echo "codex" ;;
     OPENCODE)   echo "opencode" ;;
@@ -546,7 +543,7 @@ run_full() {
   done
 }
 
-EXPECTED_ARGS="$(jq -r '(.languages[] | {python:"PYTHON",go:"GOLANG",js:"NODEJS",dotnet:"DOTNET"}[.]), (.tools[] | {awscli:"AWSCLI",azcli:"AZCLI",gh:"GHCLI",pwsh:"POWERSHELL",azpwsh:"AZPWSH"}[.]), (.clis[] | {claude:"CLAUDECODE",codex:"CODEX",opencode:"OPENCODE",kiro:"KIRO"}[.])' "$SCAFFOLD_JSON" | sort)"
+EXPECTED_ARGS="$(jq -r '(.languages[] | {python:"PYTHON",go:"GOLANG",js:"NODEJS",dotnet:"DOTNET"}[.]), (.tools[] | {awscli:"AWSCLI",azcli:"AZCLI",gh:"GHCLI",pwsh:"POWERSHELL",azpwsh:"AZPWSH",graphify:"GRAPHIFYY"}[.]), (.clis[] | {claude:"CLAUDECODE",codex:"CODEX",opencode:"OPENCODE",kiro:"KIRO"}[.])' "$SCAFFOLD_JSON" | sort)"
 DETECTED_ARGS="$(sed -n -E 's/^ARG ([A-Z_]+)=true[[:space:]]*$/\1/p' "$DOCKERFILE" | sort)"
 if [ "$EXPECTED_ARGS" != "$DETECTED_ARGS" ] && [ "$UPDATE_ACK_DRIFT" != true ]; then
   die "Detected feature state differs from scaffold.json; use --force to acknowledge drift."
@@ -600,10 +597,11 @@ tool_arg() {
     gh)     echo "GHCLI" ;;
     pwsh)   echo "POWERSHELL" ;;
     azpwsh) echo "AZPWSH" ;;
+    graphify) echo "GRAPHIFYY" ;;
     *)      return 1 ;;
   esac
 }
-VALID_TOOLS="awscli azcli gh pwsh azpwsh"
+VALID_TOOLS="awscli azcli gh pwsh azpwsh graphify"
 
 # AI CLI token → Dockerfile ARG name. Selecting a CLI installs its binary and
 # configures its native project-local state. All CLI ARGs default false in the
@@ -1236,7 +1234,10 @@ fi
 # Merge the native update-disable settings without replacing unrelated state.
 has_cli claude && merge_json_boolean "$TARGET/.claude/settings.json" autoUpdates false
 has_cli codex && merge_codex_native_config "$TARGET/.codex/config.toml"
-has_cli opencode && merge_json_boolean "$TARGET/.opencode/opencode.json" autoupdate false
+if has_cli opencode; then
+  mkdir -p "$TARGET/.opencode/data"
+  merge_json_boolean "$TARGET/.opencode/opencode.json" autoupdate false
+fi
 has_cli kiro && merge_json_boolean "$TARGET/.kiro/settings/cli.json" app.disableAutoupdates true
 
 [ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"

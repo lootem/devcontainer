@@ -17,33 +17,53 @@ jobs:
 
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      # trixie is a rolling tag Renovate can't reliably date, so resolve the
-      # digest and the image's age here and apply the same 7-day gate.
-      # `imagetools inspect` resolves the multi-arch index digest directly
-      # from the registry (deterministic), rather than `docker pull` +
-      # `RepoDigests[0]`, which is only stable for whichever single-arch
-      # manifest the local daemon happened to pull.
-      - name: Resolve digest and age
+      # Resolve both pinned images and apply the same 7-day supply-chain gate.
+      # The uv tag is read from the Dockerfile, so Renovate can update its
+      # version independently while this workflow keeps its digest current.
+      # `imagetools inspect` resolves each multi-arch index digest directly
+      # from the registry rather than using an architecture-specific pull.
+      - name: Resolve digests and ages
         id: resolve
         run: |
           set -euo pipefail
-          IMAGE="mcr.microsoft.com/devcontainers/base:trixie"
-          NEW_DIGEST=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | jq -r .)
-          docker pull "$IMAGE" >/dev/null
-          CREATED=$(docker inspect --format='{{.Created}}' "$IMAGE")
-          AGE_DAYS=$(( ( $(date +%s) - $(date -d "$CREATED" +%s) ) / 86400 ))
-          CURRENT_DIGEST=$(grep -oP '(?<=trixie@)sha256:[0-9a-f]+' .devcontainer/Dockerfile)
-          echo "digest=$NEW_DIGEST" >> "$GITHUB_OUTPUT"
-          echo "age_days=$AGE_DAYS" >> "$GITHUB_OUTPUT"
-          echo "current_digest=$CURRENT_DIGEST" >> "$GITHUB_OUTPUT"
+
+          resolve_image() {
+            local key="$1" image="$2" current_digest new_digest created age_days
+            current_digest=$(grep -F "FROM ${image}@" .devcontainer/Dockerfile | sed -E 's/.*@(sha256:[0-9a-f]+).*/\1/')
+            new_digest=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' | jq -r .)
+            docker pull "$image" >/dev/null
+            created=$(docker inspect --format='{{.Created}}' "$image")
+            age_days=$(( ( $(date +%s) - $(date -d "$created" +%s) ) / 86400 ))
+            echo "${key}_image=$image" >> "$GITHUB_OUTPUT"
+            echo "${key}_digest=$new_digest" >> "$GITHUB_OUTPUT"
+            echo "${key}_age_days=$age_days" >> "$GITHUB_OUTPUT"
+            echo "${key}_current_digest=$current_digest" >> "$GITHUB_OUTPUT"
+          }
+
+          BASE_IMAGE="mcr.microsoft.com/devcontainers/base:trixie"
+          UV_IMAGE=$(sed -n -E 's|^FROM (ghcr.io/astral-sh/uv:[^@[:space:]]+)@sha256:[0-9a-f]+.*$|\1|p' .devcontainer/Dockerfile)
+          [ -n "$UV_IMAGE" ]
+
+          resolve_image base "$BASE_IMAGE"
+          resolve_image uv "$UV_IMAGE"
 
       - name: Update Dockerfile
         id: update
-        if: steps.resolve.outputs.digest != steps.resolve.outputs.current_digest && steps.resolve.outputs.age_days >= 7
         run: |
           set -euo pipefail
-          sed -i "s|trixie@${{ steps.resolve.outputs.current_digest }}|trixie@${{ steps.resolve.outputs.digest }}|" .devcontainer/Dockerfile
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          changed=false
+
+          bump_if_aged() {
+            local image="$1" current="$2" new="$3" age_days="$4"
+            if [ "$current" != "$new" ] && [ "$age_days" -ge 7 ]; then
+              sed -i "s|${image}@${current}|${image}@${new}|" .devcontainer/Dockerfile
+              changed=true
+            fi
+          }
+
+          bump_if_aged "${{ steps.resolve.outputs.base_image }}" "${{ steps.resolve.outputs.base_current_digest }}" "${{ steps.resolve.outputs.base_digest }}" "${{ steps.resolve.outputs.base_age_days }}"
+          bump_if_aged "${{ steps.resolve.outputs.uv_image }}" "${{ steps.resolve.outputs.uv_current_digest }}" "${{ steps.resolve.outputs.uv_digest }}" "${{ steps.resolve.outputs.uv_age_days }}"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
       - name: Open PR
         if: steps.update.outputs.changed == 'true'
@@ -51,12 +71,15 @@ jobs:
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.RENOVATE_TOKEN }}
-          commit-message: 'chore(deps): bump devcontainers/base:trixie digest'
-          title: 'chore(deps): bump devcontainers/base:trixie base image digest'
+          commit-message: 'chore(deps): bump pinned container image digests'
+          title: 'chore(deps): bump pinned container image digests'
           body: |
-            Bumps the `trixie` base image digest to the current tip.
+            Bumps changed, sufficiently aged container image digests to their current tips.
 
-            Image age: ${{ steps.resolve.outputs.age_days }} days (meets the 7-day gate).
+            - `devcontainers/base:trixie`: ${{ steps.resolve.outputs.base_age_days }} days old
+            - `${{ steps.resolve.outputs.uv_image }}`: ${{ steps.resolve.outputs.uv_age_days }} days old
+
+            Only image references at least 7 days old are changed.
           branch: bump-base-image-digest
           delete-branch: true
 

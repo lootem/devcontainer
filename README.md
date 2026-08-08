@@ -43,7 +43,7 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 | Option | What it does |
 | --- | --- |
 | `-l`, `--language <list>` | Language(s): `python`, `go`, `js`, `dotnet`. Comma-combine, or omit to be prompted. |
-| `-T`, `--tool <list>` | Cloud/shell tool(s): `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`. Comma-combine. |
+| `-T`, `--tool <list>` | Extra tool(s): `awscli`, `azcli`, `gh`, `pwsh`, `azpwsh`, `graphify`. Comma-combine. |
 | `-c`, `--cli <list>` | AI coding CLI(s): `claude`, `codex`, `opencode`, `kiro`. Comma-combine, or omit for none. |
 | `--skills` | Also bring the curated skills, into each selected CLI's skills dir. |
 | `-t`, `--target <dir>` | Where to set things up (defaults to current folder). |
@@ -54,6 +54,9 @@ if you verify the *same* ref the URL serves - pin both to one sha.
 
 Enabling a tool only flips its Dockerfile build arg (no editor/`.gitignore`
 entries, unlike languages). `azpwsh` implies `pwsh`, so you needn't pass both.
+Graphify is installed with its PDF, Office, video, and MCP extras. Its pinned
+`uv` build helper is mounted only for the install step and is not copied into
+the resulting image.
 
 Selecting an AI CLI installs its binary for direct execution and gives it
 project-local native state (`.claude/`, `.codex/`, `.opencode/`, or `.kiro/`). With
@@ -156,7 +159,7 @@ mapping.
 
 ## Built to reduce supply-chain risk
 
-- **Everything is pinned** - base image to an exact digest, each tool to a named
+- **Everything is pinned** - container images to exact digests, each tool to a named
   version - so builds are reproducible and a tampered upstream can't silently flow in.
 - **You only install what you asked for** - per-language/tool build args, all
   defaulting to *off*. Smaller surface, fewer parts to trust.
@@ -185,9 +188,6 @@ artifact before updating the armored key and lock metadata together.
 **VS Code extensions.** Those on [OpenVSX](https://open-vsx.org) are pinned to an
 exact version (`publisher.name@x.y.z`) and tracked by Renovate via a custom
 datasource under the same gated rules (including several MS-published ones like
-`ms-python.python`). Extensions not on OpenVSX (Remote Development pack, Pylance,
-`ms-dotnettools.vscode-dotnet-pack`) float unpinned - but with
-`extensions.autoUpdate`/`autoCheckUpdates` off, they won't silently update in a
-running container. Generate a project without a fork and its own Renovate config,
+`ms-python.python`). Generate a project without a fork and its own Renovate config,
 and pins freeze at generation time; rerun `./install.sh -f` against a newer ref
 to pick up updates.
