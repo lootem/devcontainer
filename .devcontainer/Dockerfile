@@ -25,7 +25,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.10
+ARG OPENCODE_VER=1.18.11
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
@@ -162,7 +162,7 @@ ARG GO_VER=1.26.5
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 # renovate: datasource=go depName=github.com/go-delve/delve
-ARG DLV_VER=1.27.0
+ARG DLV_VER=1.27.1
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$GOLANG" = "true" ]; then \
