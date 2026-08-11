@@ -25,7 +25,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.11
+ARG OPENCODE_VER=1.18.12
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.220
+ARG CLAUDE_VER=2.1.221
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -208,7 +208,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.19.0
+ARG PNPM_VER=11.20.0
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
@@ -253,7 +253,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- AZCLI
 ARG AZCLI=false
 # renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
-ARG AZ_VER=2.88.0
+ARG AZ_VER=2.89.0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$AZCLI" = "true" ]; then \
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.36.14
+ARG AWS_VER=2.36.15
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
