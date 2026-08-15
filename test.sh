@@ -329,7 +329,7 @@ test_tool_scaffold() {
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG GRAPHIFYY=true'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG AZCLI=false'
   assert_contains "$d/.devcontainer/Dockerfile" 'ARG POWERSHELL=false'
-  assert_contains "$d/.devcontainer/Dockerfile" 'from=uv,source=/uv,target=/tmp/uv,readonly'
+  assert_contains "$d/.devcontainer/Dockerfile" 'from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly'
   assert_contains "$d/.devcontainer/Dockerfile" '/tmp/uv cache clean'
 }
 
