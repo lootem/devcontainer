@@ -25,7 +25,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.16
+ARG OPENCODE_VER=1.18.18
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.228
+ARG CLAUDE_VER=2.1.229
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.40
+ARG GRAPHIFYY_VER=0.9.41
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -158,7 +158,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_VER=1.26.5
+ARG GO_VER=1.26.6
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 # renovate: datasource=go depName=github.com/go-delve/delve
@@ -253,7 +253,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- AZCLI
 ARG AZCLI=false
 # renovate: datasource=github-releases depName=Azure/azure-cli extractVersion=^azure-cli-(?<version>.*)$
-ARG AZ_VER=2.89.0
+ARG AZ_VER=2.89.1
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$AZCLI" = "true" ]; then \
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.36.21
+ARG AWS_VER=2.36.22
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
