@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.234
+ARG CLAUDE_VER=2.1.235
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -125,7 +125,7 @@ USER root
 # -- Codex CLI
 ARG CODEX=false
 # renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
-ARG CODEX_VER=0.147.0
+ARG CODEX_VER=0.148.0
 
 RUN if [ "$CODEX" = "true" ]; then \
     ARCH="$(uname -m)" && \
@@ -158,7 +158,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_VER=1.26.6
+ARG GO_VER=1.27.0
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 # renovate: datasource=go depName=github.com/go-delve/delve
@@ -202,7 +202,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- Node.js
 ARG NODEJS=false
 # renovate: datasource=github-releases depName=nvm-sh/nvm
-ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.6/install.sh
+ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.7/install.sh
 # renovate: datasource=node-version depName=node
 ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
