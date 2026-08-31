@@ -125,7 +125,7 @@ USER root
 # -- Codex CLI
 ARG CODEX=false
 # renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
-ARG CODEX_VER=0.149.0
+ARG CODEX_VER=0.149.1
 
 RUN if [ "$CODEX" = "true" ]; then \
     ARCH="$(uname -m)" && \
@@ -208,7 +208,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.22.0
+ARG PNPM_VER=11.23.0
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
