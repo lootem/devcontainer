@@ -125,7 +125,7 @@ USER root
 # -- Codex CLI
 ARG CODEX=false
 # renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
-ARG CODEX_VER=0.150.1
+ARG CODEX_VER=0.151.0
 
 RUN if [ "$CODEX" = "true" ]; then \
     ARCH="$(uname -m)" && \
@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.51
+ARG GRAPHIFYY_VER=0.9.52
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -185,7 +185,7 @@ USER root
 # -- Python
 ARG PYTHON=false
 # renovate: datasource=pypi depName=poetry
-ARG POETRY_VER=2.4.1
+ARG POETRY_VER=2.4.2
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked \
@@ -208,7 +208,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.24.0
+ARG PNPM_VER=11.25.0
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
