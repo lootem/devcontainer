@@ -10,5 +10,6 @@
   allowedCommands: [
     '^\\./install\\.sh dependency-lock kiro [0-9]+\\.[0-9]+\\.[0-9]+$',
     '^\\./skills/vendor-matt-pocock-skills\\.sh$',
+    '^\\./skills/vendor-specterops-skills\\.sh$',
   ],
 }

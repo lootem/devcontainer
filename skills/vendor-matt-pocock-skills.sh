@@ -72,7 +72,7 @@ done
 
 [ -d "$SKILLS_DIR" ] || die "No skills/ directory found at $SKILLS_DIR"
 
-# --- Remove: delete every skills/<name>/ whose SKILL.md carries a nested ----
+# --- Ownership: identify skills carrying this vendor's frontmatter marker --
 # `metadata: author: mattpocock` — parsed from the fenced frontmatter block
 # only, so a stray body mention can never trigger a deletion.
 has_mattpocock_frontmatter() { # has_mattpocock_frontmatter <SKILL.md>
@@ -87,17 +87,6 @@ has_mattpocock_frontmatter() { # has_mattpocock_frontmatter <SKILL.md>
   '
 }
 
-REMOVED=0
-for d in "$SKILLS_DIR"/*/; do
-  name="$(basename "$d")"
-  skill_md="$d/SKILL.md"
-  [ -f "$skill_md" ] || continue
-  if has_mattpocock_frontmatter "$skill_md"; then
-    rm -rf "$d"
-    REMOVED=$((REMOVED + 1))
-    info "removed skills/$name (author: mattpocock)"
-  fi
-done
 
 # --- Clone: partial + sparse checkout, pinned to $REF -----------------------
 TMP_CLONE="$(mktemp -d)"
@@ -134,6 +123,40 @@ for category in engineering productivity; do
     NAME_CATEGORY[$name]="$category"
   done
 done
+validate_skill_md() { # validate_skill_md <SKILL.md>
+  local file="$1" fence_count
+  [ -f "$file" ] || die "$file is missing — refusing to vendor an incomplete skill."
+  fence_count="$(grep -cE '^---[[:space:]]*$' "$file" || true)"
+  [ "$fence_count" -ge 2 ] || die "$file has no frontmatter fences — refusing to stamp."
+}
+
+# Validate upstream content and every destination before deleting any currently
+# vendored Matt skills. A destination is replaceable only when Matt's
+# frontmatter marker proves this vendor already owns it.
+for name in $(printf '%s\n' "${!NAME_CATEGORY[@]}" | sort); do
+  category="${NAME_CATEGORY[$name]}"
+  src="$TMP_CLONE/skills/$category/$name"
+  dest="$SKILLS_DIR/$name"
+  validate_skill_md "$src/SKILL.md"
+  [ -e "$dest" ] || continue
+  if [ ! -f "$dest/SKILL.md" ] || ! has_mattpocock_frontmatter "$dest/SKILL.md"; then
+    die "Name collision: skills/$name already exists and is not owned by the Matt Pocock vendor."
+  fi
+done
+
+REMOVED=0
+for d in "$SKILLS_DIR"/*/; do
+  name="$(basename "$d")"
+  skill_md="$d/SKILL.md"
+  [ -f "$skill_md" ] || continue
+  if has_mattpocock_frontmatter "$skill_md"; then
+    rm -rf "$d"
+    REMOVED=$((REMOVED + 1))
+    info "removed skills/$name (author: mattpocock)"
+  fi
+done
+
+
 
 # --- Stamp: ensure a nested metadata: block on each cloned SKILL.md ----------
 # with author/category set (overwrite-if-present, idempotent). Uses awk/sed
@@ -141,10 +164,7 @@ done
 stamp_skill_md() { # stamp_skill_md <SKILL.md> <category>
   local file="$1" category="$2" tmp
   tmp="$(mktemp)"
-
-  local fence_count
-  fence_count="$(grep -cE '^---[[:space:]]*$' "$file" || true)"
-  [ "$fence_count" -ge 2 ] || die "$file has no frontmatter fences — refusing to stamp."
+  validate_skill_md "$file"
 
   awk -v author="mattpocock" -v category="$category" '
     BEGIN { fences = 0; in_meta = 0; meta_seen = 0 }

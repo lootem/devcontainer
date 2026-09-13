@@ -64,6 +64,12 @@ project-local native state (`.claude/`, `.codex/`, `.opencode/`, or `.kiro/`). W
 `.agents/skills/`, `.opencode/skills/`, or `.kiro/skills/`. Passing `--skills`
 without at least one selected CLI is an error.
 
+Vendored skills retain their complete directories, including references,
+scripts, assets, and agent metadata. The catalog includes pinned upstream
+skills from [Matt Pocock](https://github.com/mattpocock/skills) and the
+standalone `skills/` catalog from [SpecterOps](https://github.com/SpecterOps/skills).
+Repository-maintenance vendor helpers are not copied into generated projects.
+
 OpenCode installs the architecture-specific headless CLI package from npm. The
 build verifies the package tarball against npm's published SHA-512 integrity
 value before extracting `opencode`.
@@ -169,6 +175,11 @@ mapping.
 image-digest workflow open PRs but never merge blindly: minor/patch only (never
 major), a 7-day supply-chain age gate, and the container must build with every
 feature flag on (`build.yml`) before merge.
+
+Third-party skill catalogs are pinned to exact commits. Renovate advances each
+pin and runs its narrowly allowlisted vendor helper in the same PR, refreshing
+the tracked skill directories only after the age gate. Generated projects stay
+at the template revision they were created from until the installer is rerun.
 
 Kiro is a multi-artifact exception to ordinary single-pin updates. Renovate
 dates releases from exact `kiro-cli <semver>` Homebrew cask commits, then runs
