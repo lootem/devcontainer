@@ -1342,9 +1342,10 @@ if [ "$WANT_SKILLS" = true ]; then
       if may_write "$TARGET/$dir"; then
         mkdir -p "$TARGET/$dir"
         cp -R "$SRC/skills/." "$TARGET/$dir/"
-        # Maintainer-only tool for re-vendoring skills/ itself — irrelevant
-        # (and not meant to run) inside a generated project's skills dir.
-        rm -f "$TARGET/$dir/vendor-matt-pocock-skills.sh"
+        # Maintainer-only tools for re-vendoring this template's skills/
+        # catalog — not supporting scripts belonging to individual skills.
+        rm -f "$TARGET/$dir/vendor-matt-pocock-skills.sh" \
+          "$TARGET/$dir/vendor-specterops-skills.sh"
         info "Wrote $TARGET/$dir/"
         SKILLS_DIRS+=("$dir")
       fi

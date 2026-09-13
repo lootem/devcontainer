@@ -80,11 +80,12 @@ INSTALL="$(make_local_install)"
 # network. The fixture's SHAs are baked in by build_vendor_fixture (below).
 VENDOR_CLONE_URL='https://github.com/$REPO'
 
-make_local_vendor_script() { # make_local_vendor_script <fixture-path> -> prints path to a patched copy
-  local fixture="$1" patched="$PATCH_DIR/vendor-matt-pocock-skills-$RANDOM.sh"
-  grep -qF "$VENDOR_CLONE_URL" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
-    || { echo "test.sh: vendor script's git clone URL has changed — update VENDOR_CLONE_URL in test.sh" >&2; exit 1; }
-  sed "s|$VENDOR_CLONE_URL|$fixture|" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" > "$patched"
+make_local_vendor_script() { # make_local_vendor_script <script-path> <fixture-path> -> prints path to a patched copy
+  local source_script="$1" fixture="$2" patched
+  patched="$PATCH_DIR/$(basename "$source_script" .sh)-$RANDOM.sh"
+  grep -qF "$VENDOR_CLONE_URL" "$source_script" \
+    || { echo "test.sh: $(basename "$source_script") git clone URL has changed — update VENDOR_CLONE_URL in test.sh" >&2; exit 1; }
+  sed "s|$VENDOR_CLONE_URL|$fixture|" "$source_script" > "$patched"
   chmod +x "$patched"
   printf '%s' "$patched"
 }
@@ -134,6 +135,50 @@ EOF
     git rev-parse HEAD
   )
 }
+# Builds a local SpecterOps fixture with one complete standalone skill, one
+# plugin-bundled skill that must be ignored, and a later malformed standalone.
+# Echoes "clean_sha badfm_sha".
+build_specterops_vendor_fixture() { # build_specterops_vendor_fixture <dir>
+  local fixture="$1"
+  git init -q "$fixture"
+  (
+    cd "$fixture"
+    git config user.email test@example.com
+    git config user.name test
+
+    mkdir -p skills/demo-standalone/references skills/demo-standalone/scripts \
+      skills/demo-standalone/agents plugins/demo/skills/plugin-only
+    cat > skills/demo-standalone/SKILL.md <<'EOF'
+---
+name: demo-standalone
+description: complete standalone fixture
+metadata:
+  license: MIT
+---
+Body.
+EOF
+    printf 'reference\n' > skills/demo-standalone/references/guide.md
+    printf '#!/usr/bin/env bash\nprintf "support script\\n"\n' > skills/demo-standalone/scripts/run.sh
+    chmod +x skills/demo-standalone/scripts/run.sh
+    printf 'interface:\n  display_name: Demo\n' > skills/demo-standalone/agents/openai.yaml
+    cat > plugins/demo/skills/plugin-only/SKILL.md <<'EOF'
+---
+name: plugin-only
+description: must not be imported
+---
+Body.
+EOF
+    printf 'Apache License fixture\n' > LICENSE
+    git add -A && git commit -q -m clean
+    git rev-parse HEAD
+
+    mkdir -p skills/bad-frontmatter
+    printf 'no frontmatter fences here\n' > skills/bad-frontmatter/SKILL.md
+    git add -A && git commit -q -m badfm
+    git rev-parse HEAD
+  )
+}
+
 
 # unified installer --full normally fetches install.sh from https://ltm.sh/dev/<ref>;
 # for tests, swap that one line for a direct call to the patched local install.sh.
@@ -346,7 +391,10 @@ test_vendor_script_excluded_from_skills_copy() {
   local d; d="$(new_dir)"
   run_install "$d" --language go --cli claude --skills --force
   assert_file_exists "$d/.claude/skills/code-review/SKILL.md"
+  assert_file_exists "$d/.claude/skills/cwe-code-review/scripts/cwe_lookup.py"
+  assert_file_exists "$d/.claude/skills/cwe-code-review/references/cwe-schema-guide.md"
   assert_file_not_exists "$d/.claude/skills/vendor-matt-pocock-skills.sh"
+  assert_file_not_exists "$d/.claude/skills/vendor-specterops-skills.sh"
 }
 
 test_vendor_script_mattpocock_skills_have_category() {
@@ -381,6 +429,30 @@ test_vendor_script_help() {
     || fail "--help doesn't mention .claude/skills/ drift"
 }
 
+test_specterops_vendor_script_cli() {
+  local script="$REPO_ROOT/skills/vendor-specterops-skills.sh" out
+  bash -n "$script" && ok "vendor-specterops-skills.sh parses" \
+    || fail "vendor-specterops-skills.sh syntax error"
+  out="$(bash "$script" --help)"
+  printf '%s' "$out" | grep -qF -- "--ref" && ok "SpecterOps --help mentions --ref" || fail "SpecterOps --help missing --ref"
+  printf '%s' "$out" | grep -qF -- "--repo" && ok "SpecterOps --help mentions --repo" || fail "SpecterOps --help missing --repo"
+
+  printf '%s' "$out" | grep -qF "standalone" && ok "SpecterOps --help states standalone scope" || fail "SpecterOps --help doesn't state standalone scope"
+}
+test_specterops_vendored_catalog() {
+  local name
+  for name in cwe-code-review openssf-python-review owasp-security-code-review; do
+    assert_file_exists "$REPO_ROOT/skills/$name/SKILL.md"
+    assert_contains "$REPO_ROOT/skills/$name/SKILL.md" "source: specterops"
+    assert_contains "$REPO_ROOT/skills/$name/SKILL.md" "category: standalone"
+  done
+  assert_file_exists "$REPO_ROOT/skills/cwe-code-review/scripts/cwe_lookup.py"
+  assert_file_exists "$REPO_ROOT/skills/openssf-python-review/references/openssf-python-rule-index.md"
+  assert_file_exists "$REPO_ROOT/skills/owasp-security-code-review/references/owasp-secure-code-review.md"
+  assert_file_exists "$REPO_ROOT/skills/SPECTEROPS-SKILLS-LICENSE"
+}
+
+
 test_vendor_script_end_to_end() {
   local fixture; fixture="$(new_dir)"
   local shas clean_sha collide_sha badfm_sha
@@ -408,7 +480,7 @@ description: not tagged, must survive untouched
 Body mentions author: mattpocock in prose only.
 EOF
 
-  local script; script="$(make_local_vendor_script "$fixture")"
+  local script; script="$(make_local_vendor_script "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" "$fixture")"
 
   # The script derives its repo root from its own path (dirname/..), so drop
   # the patched copy into $target/skills/ to scope it at $target.
@@ -451,6 +523,130 @@ EOF
     grep -qi "frontmatter" "$target/.badfm.log" && ok "vendor script dies loudly on missing frontmatter" \
       || fail "vendor script failed but without mentioning frontmatter"
   fi
+  # A destination owned by another vendor must fail before stale Matt skills
+  # are removed.
+  local ownership_target; ownership_target="$(new_dir)"
+  mkdir -p "$ownership_target/skills/demo-a" "$ownership_target/skills/stale-matt"
+  cat > "$ownership_target/skills/demo-a/SKILL.md" <<'EOF'
+---
+name: demo-a
+description: SpecterOps-owned name collision
+metadata:
+  source: specterops
+---
+Body.
+EOF
+  cat > "$ownership_target/skills/stale-matt/SKILL.md" <<'EOF'
+---
+name: stale-matt
+description: must survive failed preflight
+metadata:
+  author: mattpocock
+---
+Body.
+EOF
+  cp "$script" "$ownership_target/skills/vendor.sh"
+  before="$(find "$ownership_target/skills" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  if ( cd "$ownership_target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) >"$ownership_target/.collision.log" 2>&1; then
+    fail "Matt vendor should fail on a differently owned destination"
+  else
+    grep -qi "collision" "$ownership_target/.collision.log" && ok "Matt vendor rejects differently owned collision" \
+      || fail "Matt vendor collision error lacks context"
+  fi
+  after="$(find "$ownership_target/skills" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  assert_eq "$after" "$before" "Matt vendor collision leaves catalog untouched"
+
+}
+
+test_specterops_vendor_script_end_to_end() {
+  local fixture; fixture="$(new_dir)"
+  local shas clean_sha badfm_sha
+  shas="$(build_specterops_vendor_fixture "$fixture")"
+  clean_sha="$(sed -n '1p' <<<"$shas")"
+  badfm_sha="$(sed -n '2p' <<<"$shas")"
+
+  local target; target="$(new_dir)"
+  mkdir -p "$target/skills/stale-specterops" "$target/skills/preexisting-other"
+  cat > "$target/skills/stale-specterops/SKILL.md" <<'EOF'
+---
+name: stale-specterops
+description: removed upstream
+metadata:
+  source: specterops
+---
+Body.
+EOF
+  cat > "$target/skills/preexisting-other/SKILL.md" <<'EOF'
+---
+name: preexisting-other
+description: unrelated local skill
+---
+Body.
+EOF
+
+  local script; script="$(make_local_vendor_script "$REPO_ROOT/skills/vendor-specterops-skills.sh" "$fixture")"
+  cp "$script" "$target/skills/vendor.sh"
+  ( cd "$target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) \
+    >"$target/.out" 2>&1 || { echo "SpecterOps vendor script failed:"; cat "$target/.out"; fail "SpecterOps clean ref run failed"; return; }
+
+  assert_file_exists "$target/skills/demo-standalone/SKILL.md"
+  assert_file_exists "$target/skills/demo-standalone/references/guide.md"
+  assert_file_exists "$target/skills/demo-standalone/scripts/run.sh"
+  assert_file_exists "$target/skills/demo-standalone/agents/openai.yaml"
+  [ -x "$target/skills/demo-standalone/scripts/run.sh" ] && ok "SpecterOps support script remains executable" \
+    || fail "SpecterOps support script lost its executable bit"
+  assert_file_not_exists "$target/skills/plugin-only/SKILL.md"
+  assert_file_not_exists "$target/skills/stale-specterops/SKILL.md"
+  assert_file_exists "$target/skills/preexisting-other/SKILL.md"
+  assert_contains "$target/skills/demo-standalone/SKILL.md" "source: specterops"
+  assert_contains "$target/skills/demo-standalone/SKILL.md" "category: standalone"
+  assert_contains "$target/skills/demo-standalone/SKILL.md" "license: MIT"
+  assert_contains "$target/skills/SPECTEROPS-SKILLS-LICENSE" "Apache License fixture"
+
+  local before after
+  before="$(find "$target/skills/demo-standalone" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  ( cd "$target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) >/dev/null 2>&1
+  after="$(find "$target/skills/demo-standalone" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  assert_eq "$after" "$before" "SpecterOps same-ref rerun is idempotent"
+
+  before="$(find "$target/skills" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  if ( cd "$target" && bash skills/vendor.sh --ref "$badfm_sha" --repo unused ) >"$target/.badfm.log" 2>&1; then
+    fail "SpecterOps vendor should fail on malformed frontmatter"
+  else
+    grep -qi "frontmatter" "$target/.badfm.log" && ok "SpecterOps vendor rejects malformed frontmatter" \
+      || fail "SpecterOps malformed-frontmatter error lacks context"
+  fi
+  after="$(find "$target/skills" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  assert_eq "$after" "$before" "SpecterOps validation failure leaves catalog untouched"
+
+  local collision_target; collision_target="$(new_dir)"
+  mkdir -p "$collision_target/skills/demo-standalone" "$collision_target/skills/stale-specterops"
+  cat > "$collision_target/skills/demo-standalone/SKILL.md" <<'EOF'
+---
+name: demo-standalone
+description: unrelated skill with conflicting name
+---
+Body.
+EOF
+  cat > "$collision_target/skills/stale-specterops/SKILL.md" <<'EOF'
+---
+name: stale-specterops
+description: must survive failed preflight
+metadata:
+  source: specterops
+---
+Body.
+EOF
+  cp "$script" "$collision_target/skills/vendor.sh"
+  before="$(find "$collision_target/skills" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  if ( cd "$collision_target" && bash skills/vendor.sh --ref "$clean_sha" --repo unused ) >"$collision_target/.collision.log" 2>&1; then
+    fail "SpecterOps vendor should fail on a non-owned name collision"
+  else
+    grep -qi "collision" "$collision_target/.collision.log" && ok "SpecterOps vendor rejects non-owned name collision" \
+      || fail "SpecterOps collision error lacks context"
+  fi
+  after="$(find "$collision_target/skills" -type f -exec sha256sum {} + | sort | sha256sum | cut -d' ' -f1)"
+  assert_eq "$after" "$before" "SpecterOps collision leaves catalog untouched"
 }
 
 test_unified_installer_shipped_and_executable() {
@@ -1166,6 +1362,39 @@ test_renovate_regex_covers_vendor_script_pin() {
   assert_contains "$global" '^\\./skills/vendor-matt-pocock-skills\\.sh$'
 }
 
+test_renovate_covers_specterops_vendor_pin() {
+  local renovate="$REPO_ROOT/renovate.json5"
+  local global="$REPO_ROOT/.github/renovate-global.json5"
+  local vendor_script="$REPO_ROOT/skills/vendor-specterops-skills.sh"
+  local vendor_rule
+
+  grep -qE '^# renovate: datasource=git-refs depName=https://github.com/SpecterOps/skills$' "$vendor_script" \
+    && ok "SpecterOps vendor has a git-refs annotation" \
+    || fail "SpecterOps vendor is missing its git-refs annotation"
+  grep -qP '^REF="[0-9a-f]{40}"$' "$vendor_script" \
+    && ok "SpecterOps vendor REF is a full commit SHA" \
+    || fail "SpecterOps vendor REF is not a full commit SHA"
+  grep -qzP '# renovate: datasource=git-refs depName=https://github.com/SpecterOps/skills\nREF="[0-9a-f]{40}"' "$vendor_script" \
+    && ok "SpecterOps annotation is adjacent to REF" \
+    || fail "SpecterOps annotation is not adjacent to REF"
+
+  vendor_rule="$(awk '
+    index($0, "matchDepNames: [\"https://github.com/SpecterOps/skills\"]") { found=1 }
+    found { print }
+    found && /^    },$/ { exit }
+  ' "$renovate")"
+  assert_contains <(printf '%s\n' "$vendor_rule") 'matchDepNames: ["https://github.com/SpecterOps/skills"]'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'groupName: "SpecterOps standalone skills"'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'groupSlug: "specterops-standalone-skills"'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'commands: ["./skills/vendor-specterops-skills.sh"]'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'fileFilters: ["skills/**"]'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'executionMode: "update"'
+  assert_contains <(printf '%s\n' "$vendor_rule") 'automerge: true'
+  assert_contains "$renovate" '/^skills/vendor-specterops-skills\\.sh$/'
+  assert_contains "$global" '^\\./skills/vendor-specterops-skills\\.sh$'
+}
+
+
 test_renovate_regex_covers_extension_pins() {
   local renovate="$REPO_ROOT/renovate.json5"
   # Pull the extension customManager's matchStrings regex out of the JSON5
@@ -1317,7 +1546,8 @@ test_no_pcre_grep_in_shipped_scripts() {
   # `grep -P` (PCRE) is a GNU extension the BSD grep on macOS lacks — a script
   # shipped into generated repos that relies on it dies with "invalid option
   # -- P" on a Mac. test.sh itself is dev/CI-only (Linux), so it's exempt.
-  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh")
+  local shipped=("$REPO_ROOT/install.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh"
+    "$REPO_ROOT/skills/vendor-specterops-skills.sh")
   local bad=0 f hits
   for f in "${shipped[@]}"; do
     [ -f "$f" ] || continue
@@ -1336,7 +1566,8 @@ test_shellcheck() {
     echo "  skip - shellcheck not installed"
     return
   fi
-  shellcheck -S warning "$REPO_ROOT/install.sh" "$REPO_ROOT/test.sh" "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" \
+  shellcheck -S warning "$REPO_ROOT/install.sh" "$REPO_ROOT/test.sh" \
+    "$REPO_ROOT/skills/vendor-matt-pocock-skills.sh" "$REPO_ROOT/skills/vendor-specterops-skills.sh" \
     && ok "shellcheck clean" || fail "shellcheck reported issues"
 }
 
@@ -1445,6 +1676,9 @@ TESTS=(
   test_vendor_script_mattpocock_skills_have_category
   test_vendor_script_syntax
   test_vendor_script_help
+  test_specterops_vendor_script_cli
+  test_specterops_vendored_catalog
+  test_specterops_vendor_script_end_to_end
   test_vendor_script_end_to_end
   test_verbatim_extras
   test_generated_compose_has_no_build_args
@@ -1495,6 +1729,7 @@ TESTS=(
   test_renovate_regex_covers_pins
   test_image_digest_workflow_covers_uv
   test_renovate_regex_covers_vendor_script_pin
+  test_renovate_covers_specterops_vendor_pin
   test_renovate_regex_covers_extension_pins
   test_token_set_matches_dockerfile_args
 )

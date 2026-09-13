@@ -60,6 +60,17 @@
         executionMode: "update",
       },
     },
+    {
+      matchDepNames: ["https://github.com/SpecterOps/skills"],
+      groupName: "SpecterOps standalone skills",
+      groupSlug: "specterops-standalone-skills",
+      automerge: true,
+      postUpgradeTasks: {
+        commands: ["./skills/vendor-specterops-skills.sh"],
+        fileFilters: ["skills/**"],
+        executionMode: "update",
+      },
+    },
   ],
 
   // Dockerfile version pins are bare ARGs found via inline `# renovate:`
@@ -103,6 +114,16 @@
       // still gated by minimumReleaseAge above and required checks.
       customType: 'regex',
       managerFilePatterns: ['/^skills/vendor-matt-pocock-skills\\.sh$/'],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>git-refs) depName=(?<depName>\\S+)\\nREF="(?<currentDigest>[0-9a-f]{40})"',
+      ],
+      currentValueTemplate: 'main',
+    },
+    {
+      // The SpecterOps helper pins the upstream default branch to a commit and
+      // mirrors only immediate children of its standalone skills/ directory.
+      customType: 'regex',
+      managerFilePatterns: ['/^skills/vendor-specterops-skills\\.sh$/'],
       matchStrings: [
         '# renovate: datasource=(?<datasource>git-refs) depName=(?<depName>\\S+)\\nREF="(?<currentDigest>[0-9a-f]{40})"',
       ],
