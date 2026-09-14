@@ -208,7 +208,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.25.0
+ARG PNPM_VER=11.26.0
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
