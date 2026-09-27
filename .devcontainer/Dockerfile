@@ -185,7 +185,7 @@ USER root
 # -- Python
 ARG PYTHON=false
 # renovate: datasource=pypi depName=poetry
-ARG POETRY_VER=2.4.3
+ARG POETRY_VER=2.5.1
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked \
