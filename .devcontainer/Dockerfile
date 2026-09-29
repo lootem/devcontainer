@@ -25,7 +25,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.18.31
+ARG OPENCODE_VER=1.18.32
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.36.49
+ARG AWS_VER=2.36.50
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
