@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "kiro": {
     "amd64": {
-      "version": "2.23.0",
-      "url": "https://desktop-release.q.us-east-1.amazonaws.com/2.23.0/kirocli-x86_64-linux.tar.xz",
-      "sha256": "139773aa329bc88dca081138720e7352a99af8cf7c17033ae7676cd155f05314"
+      "version": "2.23.1",
+      "url": "https://desktop-release.q.us-east-1.amazonaws.com/2.23.1/kirocli-x86_64-linux.tar.xz",
+      "sha256": "b5b2ff5c6c92f959c375f0b9db67feffffd05df076f450fc92ad5338f2bf357e"
     },
     "arm64": {
-      "version": "2.23.0",
-      "url": "https://desktop-release.q.us-east-1.amazonaws.com/2.23.0/kirocli-aarch64-linux.tar.xz",
-      "sha256": "f544126af90a8910cefb5361ea7c2671a9889f070e2319309300a50a1e001565"
+      "version": "2.23.1",
+      "url": "https://desktop-release.q.us-east-1.amazonaws.com/2.23.1/kirocli-aarch64-linux.tar.xz",
+      "sha256": "a96220eecb6b296d711247c980cfda9aaa38cb251a863f20fbc7c562da164e25"
     }
   },
   "awscli": {
