@@ -3,7 +3,15 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-    entrypoint: sleep infinity
+    # SSH keys stay on the host; secure the mounted identity at every start.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        chown -R vscode:vscode /home/vscode/.ssh &&
+        chmod 700 /home/vscode/.ssh &&
+        find /home/vscode/.ssh -type f -exec chmod 600 {} + &&
+        exec sleep infinity
     environment:
       # Anthropic API
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -36,6 +44,7 @@ services:
       # __CLI_ENVIRONMENT__
       # __CLI_ENVIRONMENT_END__
     volumes:
+      - ./.ssh:/home/vscode/.ssh
       - ..:/app
       # __CLI_VOLUMES_BEGIN__
       # __CLI_VOLUMES__
