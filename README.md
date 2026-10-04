@@ -202,3 +202,15 @@ datasource under the same gated rules (including several MS-published ones like
 `ms-python.python`). Generate a project without a fork and its own Renovate config,
 and pins freeze at generation time; rerun `./install.sh -f` against a newer ref
 to pick up updates.
+
+### Local SSH identity
+
+Put your development SSH identity in `.devcontainer/.ssh/` (ignored by git).
+Compose mounts that directory at `/home/vscode/.ssh`; startup sets its owner to
+`vscode`, its directory mode to 700, and regular file modes to 600. The directory
+persists on the host across container rebuilds. A clean clone starts with an
+empty directory until you supply an identity. Keys are excluded from the build
+context by `.devcontainer/Dockerfile.dockerignore` and are never copied into the
+image. Existing generated Compose files retain user edits on regeneration;
+add the SSH mount and startup entrypoint from `templates/docker-compose.yml`
+when updating an existing project.
