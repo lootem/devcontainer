@@ -1240,9 +1240,6 @@ if has_cli opencode; then
 fi
 has_cli kiro && merge_json_boolean "$TARGET/.kiro/settings/cli.json" app.disableAutoupdates true
 
-[ -f "$DEVC/Dockerfile.dockerignore" ] \
-  && copy_verbatim "$DEVC/Dockerfile.dockerignore" "$TARGET/.devcontainer/Dockerfile.dockerignore"
-
 [ -f "$DEVC/awscli.pub" ] && copy_verbatim "$DEVC/awscli.pub" "$TARGET/.devcontainer/awscli.pub"
 [ -f "$DEVC/dependencies.lock.json" ] \
   && copy_verbatim "$DEVC/dependencies.lock.json" "$TARGET/.devcontainer/dependencies.lock.json"

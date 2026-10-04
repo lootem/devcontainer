@@ -5,17 +5,8 @@ services:
       dockerfile: .devcontainer/Dockerfile
       args:
         CODEX: "true"
-    # SSH keys stay on the host; secure the mounted identity at every start.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - >-
-        chown -R vscode:vscode /home/vscode/.ssh &&
-        chmod 700 /home/vscode/.ssh &&
-        find /home/vscode/.ssh -type f -exec chmod 600 {} + &&
-        exec sleep infinity
+    entrypoint: sleep infinity
     environment:
       - CODEX_HOME=/app/.codex
     volumes:
-      - ./.ssh:/home/vscode/.ssh
       - ..:/app

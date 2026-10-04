@@ -13,4 +13,3 @@
 # Remove below to keep skills uncommitted
 !.kiro/skills/
 .DS_Store
-.devcontainer/.ssh/
