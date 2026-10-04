@@ -1,6 +1,0 @@
-# Only tracked build inputs belong in the devcontainer context.
-# Local SSH identities, .env files and CLI state must never reach image layers.
-*
-!.devcontainer/
-!.devcontainer/awscli.pub
-!.devcontainer/dependencies.lock.json
