@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.292
+ARG CLAUDE_VER=2.1.295
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -125,7 +125,7 @@ USER root
 # -- Codex CLI
 ARG CODEX=false
 # renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
-ARG CODEX_VER=0.160.1
+ARG CODEX_VER=0.162.0
 
 RUN if [ "$CODEX" = "true" ]; then \
     ARCH="$(uname -m)" && \
@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.79
+ARG GRAPHIFYY_VER=0.9.82
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -158,7 +158,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_VER=1.27.1
+ARG GO_VER=1.27.2
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.23.0
 # renovate: datasource=go depName=github.com/go-delve/delve
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.37.10
+ARG AWS_VER=2.37.11
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
