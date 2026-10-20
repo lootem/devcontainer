@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.86
+ARG GRAPHIFYY_VER=0.9.88
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.37.12
+ARG AWS_VER=2.37.13
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
