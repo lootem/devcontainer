@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.296
+ARG CLAUDE_VER=2.1.299
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.88
+ARG GRAPHIFYY_VER=0.9.90
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -278,7 +278,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG POWERSHELL=false
 ARG AZPWSH=false
 # renovate: datasource=github-releases depName=PowerShell/PowerShell
-ARG PWSH_VER=7.6.6
+ARG PWSH_VER=7.6.7
 # renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2
 ARG AZPWSH_VER=15.1.0
 
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.37.13
+ARG AWS_VER=2.38.0
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
