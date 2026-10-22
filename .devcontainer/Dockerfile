@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.299
+ARG CLAUDE_VER=2.1.300
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.90
+ARG GRAPHIFYY_VER=0.9.91
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -160,7 +160,7 @@ ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
 ARG GO_VER=1.27.2
 # renovate: datasource=go depName=golang.org/x/tools/gopls
-ARG GOPLS_VER=0.23.0
+ARG GOPLS_VER=0.24.0
 # renovate: datasource=go depName=github.com/go-delve/delve
 ARG DLV_VER=1.27.2
 
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.38.0
+ARG AWS_VER=2.38.1
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
