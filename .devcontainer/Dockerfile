@@ -25,7 +25,7 @@ RUN ln -sf /bin/bash /bin/sh
 # -- Opencode
 ARG OPENCODE=false
 # renovate: datasource=npm depName=opencode-linux-x64
-ARG OPENCODE_VER=1.19.0
+ARG OPENCODE_VER=1.19.2
 
 RUN if [ "$OPENCODE" = "true" ]; then \
     ARCH="$(dpkg --print-architecture)" && \
@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.300
+ARG CLAUDE_VER=2.1.301
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -125,7 +125,7 @@ USER root
 # -- Codex CLI
 ARG CODEX=false
 # renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
-ARG CODEX_VER=0.162.1
+ARG CODEX_VER=0.163.0
 
 RUN if [ "$CODEX" = "true" ]; then \
     ARCH="$(uname -m)" && \
@@ -208,7 +208,7 @@ ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.28.5
+ARG PNPM_VER=11.28.6
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
