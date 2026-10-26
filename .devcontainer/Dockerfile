@@ -98,7 +98,7 @@ RUN --mount=type=bind,source=.devcontainer/dependencies.lock.json,target=/tmp/de
 # -- Claude Code
 ARG CLAUDECODE=false
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_VER=2.1.302
+ARG CLAUDE_VER=2.1.303
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     if [ "$CLAUDECODE" = "true" ]; then \
     install -d -m 0755 /etc/apt/keyrings && \
@@ -158,7 +158,7 @@ USER root
 # -- Go
 ARG GOLANG=false
 # renovate: datasource=golang-version depName=go
-ARG GO_VER=1.27.2
+ARG GO_VER=1.27.3
 # renovate: datasource=go depName=golang.org/x/tools/gopls
 ARG GOPLS_VER=0.24.0
 # renovate: datasource=go depName=github.com/go-delve/delve
