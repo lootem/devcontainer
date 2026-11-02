@@ -278,7 +278,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG POWERSHELL=false
 ARG AZPWSH=false
 # renovate: datasource=github-releases depName=PowerShell/PowerShell
-ARG PWSH_VER=7.6.8
+ARG PWSH_VER=7.6.9
 # renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2
 ARG AZPWSH_VER=15.1.0
 
