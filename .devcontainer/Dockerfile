@@ -202,13 +202,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # -- Node.js
 ARG NODEJS=false
 # renovate: datasource=github-releases depName=nvm-sh/nvm
-ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh
+ARG NVM_URL=https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh
 # renovate: datasource=node-version depName=node
 ARG NODE_VER=24
 # renovate: datasource=github-releases depName=oven-sh/bun
 ARG BUN_VER=1.3.14
 # renovate: datasource=npm depName=pnpm
-ARG PNPM_VER=11.28.10
+ARG PNPM_VER=11.28.11
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000,sharing=locked \
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.39.3
+ARG AWS_VER=2.39.4
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
