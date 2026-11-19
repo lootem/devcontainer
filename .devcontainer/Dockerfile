@@ -125,7 +125,7 @@ USER root
 # -- Codex CLI
 ARG CODEX=false
 # renovate: datasource=github-releases depName=openai/codex extractVersion=^rust-v(?<version>.*)$
-ARG CODEX_VER=0.167.0
+ARG CODEX_VER=0.167.2
 
 RUN if [ "$CODEX" = "true" ]; then \
     ARCH="$(uname -m)" && \
@@ -144,7 +144,7 @@ RUN if [ "$CODEX" = "true" ]; then \
 # -- Graphify
 ARG GRAPHIFYY=false
 # renovate: datasource=pypi depName=graphifyy
-ARG GRAPHIFYY_VER=0.9.105
+ARG GRAPHIFYY_VER=0.9.107
 
 USER vscode
 RUN --mount=type=bind,from=uv,source=/usr/local/bin/uv,target=/tmp/uv,readonly \
@@ -278,7 +278,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG POWERSHELL=false
 ARG AZPWSH=false
 # renovate: datasource=github-releases depName=PowerShell/PowerShell
-ARG PWSH_VER=7.6.9
+ARG PWSH_VER=7.7.0
 # renovate: datasource=nuget depName=Az registryUrl=https://www.powershellgallery.com/api/v2
 ARG AZPWSH_VER=15.1.0
 
@@ -306,7 +306,7 @@ RUN if [ "$AZPWSH" = "true" ]; then \
 # -- AWS CLI
 ARG AWSCLI=false
 # renovate: datasource=github-tags depName=aws/aws-cli
-ARG AWS_VER=2.39.7
+ARG AWS_VER=2.40.1
 
 RUN --mount=type=bind,source=.devcontainer/awscli.pub,target=/tmp/awscli.pub \
     if [ "$AWSCLI" = "true" ]; then \
